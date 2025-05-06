@@ -1,3 +1,12 @@
+//! Merkle proof verification and generation for the Bonsai Trie.
+//!
+//! This module provides functionality for generating and verifying Merkle proofs
+//! for the Bonsai Trie data structure. It includes:
+//! - Multi-proof generation and verification
+//! - Proof node types (Binary and Edge)
+//! - Error handling for proof verification
+//! - Utilities for calculating new root hashes
+
 use super::{
     merkle_node::{hash_binary_node, hash_edge_node, Direction},
     path::Path,
@@ -85,7 +94,7 @@ impl MultiProof {
                 });
             }
 
-            // Go down the tree, starting from the root.
+            // Go down the tree, starting from the root
             current_path.clear(); // hoisted alloc
             let mut current_felt = root;
 
@@ -213,6 +222,19 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         Ok(visitor.0)
     }
 
+    /// Calculates the next root hash after updating a value.
+    ///
+    /// # Arguments
+    ///
+    /// * `db` - The database to read nodes from
+    /// * `key` - The key to update
+    /// * `new_value` - The new value to set
+    /// * `current_root` - The current root hash
+    /// * `proof` - The proof for the key
+    ///
+    /// # Returns
+    ///
+    /// The new root hash after the update.
     pub fn next_root<DB: BonsaiDatabase, ID: Id>(
         &mut self,
         db: &KeyValueDB<DB, ID>,
@@ -227,15 +249,10 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
 
         loop {
             if current_path.len() == key.len() {
-                println!("Reached leaf node at path: {:?}", current_path);
                 break;
             }
 
             let Some(node) = proof.0.get(&current_felt) else {
-                println!(
-                    "Node not found in proof at path: {:?}, felt: {:?}",
-                    current_path, current_felt
-                );
                 break;
             };
 
@@ -254,7 +271,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                     if key.get(current_path.len()..(current_path.len() + path.len()))
                         != Some(&path.0)
                     {
-                        println!("Paths diverge at path: {:?}", current_path);
                         break;
                     }
                     current_path.extend_from_bitslice(&path.0);
@@ -262,18 +278,26 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                 }
             }
         }
+
         calculate_new_root_hash::<H, DB>(key, new_value, &path_nodes)
     }
 }
 
-/// Use calculate_new_root_hash to handle all cases:
-/// 1. Replace existing leaf value
-/// 2. Create new path when node not found
-/// 3. Create binary node at divergence point
+/// Calculates the new root hash after updating a value.
+///
+/// # Arguments
+///
+/// * `key` - The key being updated
+/// * `new_value` - The new value to set
+/// * `path_nodes` - The nodes along the path to the key
+///
+/// # Returns
+///
+/// The new root hash after the update.
 pub fn calculate_new_root_hash<H: StarkHash, DB: BonsaiDatabase>(
     key: &BitSlice,
     new_value: Felt,
-    path_nodes: &Vec<(BitVec, ProofNode)>,
+    path_nodes: &[(BitVec, ProofNode)],
 ) -> Result<Felt, BonsaiStorageError<DB::DatabaseError>> {
     match path_nodes.last() {
         Some((
@@ -288,11 +312,10 @@ pub fn calculate_new_root_hash<H: StarkHash, DB: BonsaiDatabase>(
             let branch_height = edge_height + common.len();
 
             if branch_height >= key.len() {
-                println!("  branch_height >= key.len(), using hash_up_merkle_path");
-                return Ok(hash_up_merkle_path::<H>(key, new_value, &path_nodes, false));
+                return Ok(hash_up_merkle_path::<H>(key, new_value, path_nodes, false));
             }
 
-            // Otherwise create a new binary node at the divergence point
+            // Create a new binary node at the divergence point
             let child_height = branch_height + 1;
             let new_path = key[child_height..].to_bitvec();
             let old_path = edge_path.0[common.len() + 1..].to_bitvec();
@@ -335,6 +358,7 @@ pub fn calculate_new_root_hash<H: StarkHash, DB: BonsaiDatabase>(
             };
 
             let current_hash = hash_up_merkle_path::<H>(key, current_hash, path_nodes, true);
+
             Ok(current_hash)
         }
         None => {
@@ -344,6 +368,17 @@ pub fn calculate_new_root_hash<H: StarkHash, DB: BonsaiDatabase>(
     }
 }
 
+/// Finds the common prefix between an edge path and a key.
+///
+/// # Arguments
+///
+/// * `edge_path` - The path of the edge node
+/// * `edge_height` - The height of the edge node
+/// * `key` - The key to compare against
+///
+/// # Returns
+///
+/// The common prefix between the edge path and the key.
 pub fn common_path<'a>(edge_path: &'a Path, edge_height: usize, key: &BitSlice) -> &'a BitSlice {
     let key_path = key.iter().skip(edge_height);
     let common_length = key_path
@@ -353,6 +388,18 @@ pub fn common_path<'a>(edge_path: &'a Path, edge_height: usize, key: &BitSlice) 
     &edge_path.0[..common_length]
 }
 
+/// Hashes up the Merkle path from a leaf to the root.
+///
+/// # Arguments
+///
+/// * `key` - The key being updated
+/// * `current_hash` - The current hash at the leaf
+/// * `path_nodes` - The nodes along the path
+/// * `skip_last` - Whether to skip the last node in the path
+///
+/// # Returns
+///
+/// The new root hash.
 pub fn hash_up_merkle_path<H: StarkHash>(
     key: &BitSlice,
     mut current_hash: Felt,
