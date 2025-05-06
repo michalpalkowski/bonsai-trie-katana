@@ -166,8 +166,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         keys: impl IntoIterator<Item = impl AsRef<BitSlice>>,
     ) -> Result<MultiProof, BonsaiStorageError<DB::DatabaseError>> {
         let max_height = self.max_height;
-        println!("\n=== get_multi_proof called ===");
-        println!("max_height: {}", max_height);
 
         struct ProofVisitor<H>(MultiProof, PhantomData<H>);
         impl<H: StarkHash + Send + Sync> NodeVisitor<H> for ProofVisitor<H> {
@@ -177,11 +175,9 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                 node_id: NodeKey,
                 _prev_height: usize,
             ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
-                println!("visit_node called with node_id: {:?}", node_id);
                 let proof_node = match tree.get_node_mut::<DB>(node_id)? {
                     Node::Binary(binary_node) => {
                         let (left, right) = (binary_node.left, binary_node.right);
-                        println!("Found Binary node: left={:?}, right={:?}", left, right);
                         ProofNode::Binary {
                             left: tree.get_or_compute_node_hash::<DB>(left)?,
                             right: tree.get_or_compute_node_hash::<DB>(right)?,
@@ -189,7 +185,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                     }
                     Node::Edge(edge_node) => {
                         let (child, path) = (edge_node.child, edge_node.path.clone());
-                        println!("Found Edge node: child={:?}, path={:?}", child, path);
                         ProofNode::Edge {
                             child: tree.get_or_compute_node_hash::<DB>(child)?,
                             path,
@@ -197,10 +192,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                     }
                 };
                 let hash = tree.get_or_compute_node_hash::<DB>(NodeHandle::InMemory(node_id))?;
-                println!(
-                    "Inserting node into proof: hash={:?}, node={:?}",
-                    hash, proof_node
-                );
                 self.0 .0.insert(hash, proof_node);
                 Ok(())
             }
@@ -210,7 +201,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         let mut iter = self.iter(db);
         for key in keys {
             let key = key.as_ref();
-            println!("Processing key: {:?}", key);
             if key.len() != max_height as usize {
                 return Err(BonsaiStorageError::KeyLength {
                     expected: self.max_height as _,
@@ -220,7 +210,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
             iter.traverse_to(&mut visitor, key)?;
         }
 
-        println!("Final proof: {:?}", visitor.0);
         Ok(visitor.0)
     }
 
@@ -232,18 +221,10 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         current_root: Felt,
         proof: &MultiProof,
     ) -> Result<Felt, BonsaiStorageError<DB::DatabaseError>> {
-        // println!("next_root called with key: {:?}, new_value: {:?}", key, new_value);
-        // let mut proof_keys = vec![key.to_bitvec()];
-        // proof_keys.sort(); // Sort keys for efficient proof generation
-        // println!("Sorted proof keys: {:?}", proof_keys);
-        // let proof = self.get_multi_proof(db, proof_keys.iter())?;
-        // println!("Got proof: {:?}", proof);
-
-        // First pass: collect all nodes from the proof
         let mut current_path = BitVec::with_capacity(251);
         let mut current_felt = current_root;
-        let mut path_nodes = Vec::new(); // Store nodes in path for building the tree
-                                         // current_path.clear();
+        let mut path_nodes = Vec::new();
+
         loop {
             if current_path.len() == key.len() {
                 println!("Reached leaf node at path: {:?}", current_path);
@@ -258,16 +239,11 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                 break;
             };
 
-            println!(
-                "Processing node at path: {:?}, node: {:?}",
-                current_path, node
-            );
             path_nodes.push((current_path.clone(), node.clone()));
 
             match node {
                 ProofNode::Binary { left, right } => {
                     let direction = Direction::from(key[current_path.len()]);
-                    println!("Binary node, going {:?}", direction);
                     current_path.push(direction.into());
                     current_felt = match direction {
                         Direction::Left => *left,
@@ -275,7 +251,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                     };
                 }
                 ProofNode::Edge { child, path } => {
-                    println!("Edge node, path: {:?}, child: {:?}", path, child);
                     if key.get(current_path.len()..(current_path.len() + path.len()))
                         != Some(&path.0)
                     {
@@ -287,25 +262,19 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                 }
             }
         }
-
-        // Use calculate_new_root_hash to handle all cases:
-        // 1. Replace existing leaf value
-        // 2. Create new path when node not found
-        // 3. Create binary node at divergence point
         calculate_new_root_hash::<H, DB>(key, new_value, &path_nodes)
     }
 }
 
+/// Use calculate_new_root_hash to handle all cases:
+/// 1. Replace existing leaf value
+/// 2. Create new path when node not found
+/// 3. Create binary node at divergence point
 pub fn calculate_new_root_hash<H: StarkHash, DB: BonsaiDatabase>(
     key: &BitSlice,
     new_value: Felt,
     path_nodes: &Vec<(BitVec, ProofNode)>,
 ) -> Result<Felt, BonsaiStorageError<DB::DatabaseError>> {
-    println!("calculate_new_root_hash called with:");
-    println!("  key: {:?}", key);
-    println!("  new_value: {:?}", new_value);
-    println!("  path_nodes: {:?}", path_nodes);
-
     match path_nodes.last() {
         Some((
             edge_path_vec,
@@ -314,13 +283,9 @@ pub fn calculate_new_root_hash<H: StarkHash, DB: BonsaiDatabase>(
                 path: edge_path,
             },
         )) => {
-            println!("Case 1: Last node is Edge");
             let edge_height = edge_path_vec.len();
             let common = common_path(edge_path, edge_height, key);
             let branch_height = edge_height + common.len();
-            println!("  edge_height: {}", edge_height);
-            println!("  common path: {:?}", common);
-            println!("  branch_height: {}", branch_height);
 
             if branch_height >= key.len() {
                 println!("  branch_height >= key.len(), using hash_up_merkle_path");
@@ -331,8 +296,6 @@ pub fn calculate_new_root_hash<H: StarkHash, DB: BonsaiDatabase>(
             let child_height = branch_height + 1;
             let new_path = key[child_height..].to_bitvec();
             let old_path = edge_path.0[common.len() + 1..].to_bitvec();
-            println!("  new_path: {:?}", new_path);
-            println!("  old_path: {:?}", old_path);
 
             let new_leaf_hash = new_value;
             let old_leaf_hash = *child;
@@ -347,52 +310,35 @@ pub fn calculate_new_root_hash<H: StarkHash, DB: BonsaiDatabase>(
             } else {
                 hash_edge_node::<H>(&Path(old_path), old_leaf_hash)
             };
-            println!("  new hash: {:?}", new);
-            println!("  old hash: {:?}", old);
 
             let new_direction = Direction::from(key[branch_height]);
             let branch_hash = match new_direction {
                 Direction::Left => hash_binary_node::<H>(new, old),
                 Direction::Right => hash_binary_node::<H>(old, new),
             };
-            println!("  branch_hash: {:?}", branch_hash);
 
             let current_hash = if common.is_empty() {
                 branch_hash
             } else {
                 hash_edge_node::<H>(&Path(edge_path.0[..common.len()].to_bitvec()), branch_hash)
             };
-            println!(
-                "  current_hash before hash_up_merkle_path: {:?}",
-                current_hash
-            );
 
             let current_hash = hash_up_merkle_path::<H>(key, current_hash, path_nodes, true);
-            println!("  final hash: {:?}", current_hash);
 
             Ok(current_hash)
         }
         Some((path, ProofNode::Binary { left, right })) => {
-            println!("Case 2: Last node is Binary");
             let direction = Direction::from(key[path.len()]);
             let current_hash = match direction {
                 Direction::Left => hash_binary_node::<H>(new_value, *right),
                 Direction::Right => hash_binary_node::<H>(*left, new_value),
             };
-            println!(
-                "  current_hash before hash_up_merkle_path: {:?}",
-                current_hash
-            );
 
             let current_hash = hash_up_merkle_path::<H>(key, current_hash, path_nodes, true);
-            println!("  final hash: {:?}", current_hash);
-
             Ok(current_hash)
         }
         None => {
-            println!("Case 3: No nodes in path");
             let final_hash = hash_edge_node::<H>(&Path(key.to_bitvec()), new_value);
-            println!("  final hash: {:?}", final_hash);
             Ok(final_hash)
         }
     }
@@ -411,7 +357,7 @@ pub fn hash_up_merkle_path<H: StarkHash>(
     key: &BitSlice,
     mut current_hash: Felt,
     path_nodes: &[(BitVec, ProofNode)],
-    skip_last: bool, // czy pominąć ostatni element (np. jeśli już go przetworzyłeś)
+    skip_last: bool, // whether to skip the last element (e.g. if you've already processed it)
 ) -> Felt {
     let iter = if skip_last {
         path_nodes.iter().rev().skip(1)
@@ -539,8 +485,10 @@ fn test_if_uncommited_changes_fails() {
             .unwrap();
     }
 
+    // Test root hash before commit
     let root_result1 = bonsai_storage.root_hash(&identifier1);
 
+    // Commit changes and test root hash after commit
     bonsai_storage.commit(id_builder.new_id()).unwrap();
     let root_result2 = bonsai_storage.root_hash(&identifier1);
 }
@@ -592,11 +540,6 @@ fn test_next_root() {
     bonsai_storage1.commit(id1).unwrap();
     let current_root = bonsai_storage1.root_hash(&identifier).unwrap();
 
-    let id2 = id_builder.new_id();
-    bonsai_storage2.commit(id2).unwrap();
-    // Get current root hash
-    let current_root2 = bonsai_storage2.root_hash(&identifier2).unwrap();
-
     // Create a new key and value to insert
     let mut new_key = vec![0; 3];
     new_key[0] = 5;
@@ -610,7 +553,7 @@ fn test_next_root() {
         .get_mut(&smallvec::smallvec![1])
         .unwrap();
 
-    let mut proof_keys = vec![&new_key_bv];
+    let proof_keys = vec![&new_key_bv];
     let proof = tree1
         .get_multi_proof(&bonsai_storage1.tries.db, proof_keys.iter())
         .unwrap();
@@ -625,7 +568,11 @@ fn test_next_root() {
             &proof,
         )
         .unwrap();
-    println!("Calculated next root: {:?}", next_root);
+
+    let id2 = id_builder.new_id();
+    bonsai_storage2.commit(id2).unwrap();
+    // Get current root hash
+    let current_root2 = bonsai_storage2.root_hash(&identifier2).unwrap();
 
     // Actually insert the value into the second tree
     bonsai_storage2
@@ -635,7 +582,6 @@ fn test_next_root() {
 
     // Get the actual root hash after insertion
     let actual_root = bonsai_storage2.root_hash(&identifier2).unwrap();
-    println!("Actual root after insertion: {:?}", actual_root);
 
     // Verify that our calculated next root matches the actual root
     assert_eq!(next_root, actual_root, "Next root calculation failed");
@@ -648,7 +594,6 @@ mod proof_proptest {
         id::{BasicId, BasicIdBuilder},
         BitVec, BonsaiStorage, BonsaiStorageConfig,
     };
-    use bitvec::order::Msb0;
     use proptest::collection::vec;
     use proptest::num::u8;
     use proptest::prelude::*;
@@ -664,75 +609,49 @@ mod proof_proptest {
     fn arb_value() -> impl Strategy<Value = Felt> {
         u8::ANY.prop_map(|v| {
             let value = Felt::from(v as u64 + 100);
-            println!("Generated value: {:?}", value);
             value
         })
     }
 
-    // Test next_root with different tree heights
-    // proptest! {
-    //     #![proptest_config(ProptestConfig {
-    //         cases: 10, // Zmniejszamy liczbę przypadków podczas debugowania
-    //         verbose: 0, // Wyłączamy szczegółowe logowanie
-    //         ..ProptestConfig::default()
-    //     })]
-    //     #[test]
-    //     fn test_next_root_height_8(
-    //         initial_keys in vec(arb_key(8), 0..5), // Zmniejszamy liczbę początkowych kluczy
-    //         new_key in arb_key(8),
-    //         new_value in arb_value(),
-    //     ) {
-    //         test_next_root(8, initial_keys, new_key, new_value);
-    //     }
-    // }
+    proptest! {
+        #![proptest_config(ProptestConfig::default())]
+        #[test]
+        fn test_next_root_height_8(
+            initial_keys in vec(arb_key(8), 1..50),
+            new_key in arb_key(8),
+            new_value in arb_value(),
+        ) {
+            test_next_root(8, initial_keys, new_key, new_value);
+        }
+    }
 
     proptest! {
-        #![proptest_config(ProptestConfig {
-            cases: 10,
-            verbose: 0,
-            ..ProptestConfig::default()
-        })]
+        #![proptest_config(ProptestConfig::default())]
         #[test]
         fn test_next_root_height_24(
-            initial_keys in vec(arb_key(24), 1..4),
+            initial_keys in vec(arb_key(24), 1..50),
             new_key in arb_key(24),
             new_value in arb_value(),
         ) {
-            println!("Initial keys: {:?}", initial_keys);
-            println!("New key: {:?}", new_key);
-            println!("New value: {:?}", new_value);
             test_next_root(24, initial_keys, new_key, new_value);
         }
     }
 
-    // proptest! {
-    //     #![proptest_config(ProptestConfig {
-    //         cases: 10,
-    //         verbose: 0,
-    //         ..ProptestConfig::default()
-    //     })]
-    //     #[test]
-    //     fn test_next_root_height_251(
-    //         initial_keys in vec(arb_key(251), 0..5),
-    //         new_key in arb_key(251),
-    //         new_value in arb_value(),
-    //     ) {
-    //         test_next_root(251, initial_keys, new_key, new_value);
-    //     }
-    // }
+    proptest! {
+        #![proptest_config(ProptestConfig::default())]
+        #[test]
+        fn test_next_root_height_251(
+            initial_keys in vec(arb_key(251), 1..50),
+            new_key in arb_key(251),
+            new_value in arb_value(),
+        ) {
+            test_next_root(251, initial_keys, new_key, new_value);
+        }
+    }
 
     // Helper function to run the test
     fn test_next_root(height: u8, initial_keys: Vec<BitVec>, new_key: BitVec, new_value: Felt) {
-        println!("\n=== Starting test_next_root ===");
-        println!("Height: {}", height);
-        println!("Number of initial keys: {}", initial_keys.len());
-        println!("Initial keys:");
-        for (i, key) in initial_keys.iter().enumerate() {
-            println!("  Key {}: {:?}", i + 1, key);
-        }
-        println!("New key: {:?}", new_key);
-        println!("New value: {:?}", new_value);
-
+        assert!(initial_keys.len() != 0 as usize);
         let db = create_rocks_db(tempfile::tempdir().unwrap().path()).unwrap();
         let identifier1 = vec![1];
         let identifier2 = vec![2];
@@ -754,27 +673,18 @@ mod proof_proptest {
         let mut id_builder = BasicIdBuilder::new();
 
         // Insert initial values
-        println!("\nInserting initial values...");
         for (i, key) in initial_keys.iter().enumerate() {
             let value = Felt::from(i as u64 + 100);
-            println!(
-                "  Inserting key {}: {:?} with value: {:?}",
-                i + 1,
-                key,
-                value
-            );
             bonsai_storage1.insert(&identifier1, key, &value).unwrap();
             bonsai_storage2.insert(&identifier2, key, &value).unwrap();
         }
 
         // Commit both trees
-        println!("\nCommitting trees...");
         let id1 = id_builder.new_id();
         bonsai_storage1.commit(id1).unwrap();
 
-        //This has to be done before second tree commit !!
+        // This has to be done before second tree commit
         let current_root = bonsai_storage1.root_hash(&identifier1).unwrap();
-        println!("Tree1 root after initial commit: {:?}", current_root);
         // Get the tree from bonsai_storage1
         let tree1 = bonsai_storage1
             .tries
@@ -782,23 +692,13 @@ mod proof_proptest {
             .get_mut(&smallvec::smallvec![1])
             .unwrap();
 
-        //This has to be done before second tree commit !!
+        // This has to be done before second tree commit
         let mut proof_keys = vec![&new_key];
         let proof = tree1
             .get_multi_proof(&bonsai_storage1.tries.db, proof_keys.iter())
             .unwrap();
 
-        let id2 = id_builder.new_id();
-        bonsai_storage2.commit(id2).unwrap();
-        let root2 = bonsai_storage2.root_hash(&identifier2).unwrap();
-        println!("Tree2 root after initial commit: {:?}", root2);
-        assert_eq!(
-            current_root, root2,
-            "Roots should be equal after initial commit"
-        );
-
         // Calculate next root using our function
-        println!("\nCalculating next_root...");
         let next_root = tree1
             .next_root(
                 &bonsai_storage1.tries.db,
@@ -808,10 +708,15 @@ mod proof_proptest {
                 &proof,
             )
             .unwrap();
-        println!("Calculated next_root: {:?}", next_root);
 
-        // Actually insert the value into the second tree
-        println!("\nInserting new value...");
+        let id2 = id_builder.new_id();
+        bonsai_storage2.commit(id2).unwrap();
+        let root2 = bonsai_storage2.root_hash(&identifier2).unwrap();
+        assert_eq!(
+            current_root, root2,
+            "Roots should be equal after initial commit"
+        );
+
         bonsai_storage2
             .insert(&identifier2, &new_key, &new_value)
             .unwrap();
@@ -819,7 +724,6 @@ mod proof_proptest {
 
         // Get the actual root hash after insertion
         let actual_root = bonsai_storage2.root_hash(&identifier2).unwrap();
-        println!("Actual root after insertion: {:?}", actual_root);
 
         // Verify that our calculated next root matches the actual root
         assert_eq!(next_root, actual_root,);
