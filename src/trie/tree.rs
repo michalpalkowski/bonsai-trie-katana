@@ -673,7 +673,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                         };
 
                         // The existing child branch of the binary node.
-                        let old = if old_path.is_empty() {
+                        let old: NodeHandle = if old_path.is_empty() {
                             edge.child
                         } else {
                             let edge_id = self.nodes.insert(Node::Edge(EdgeNode {

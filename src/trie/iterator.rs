@@ -171,7 +171,6 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
             // partition point is a binary search under the hood
             // TODO(perf): measure whether binary search is actually better than reverse iteration - the happy path may be that
             //  only the last few bits are different.
-
             self.current_nodes_heights
                 .partition_point(|(_node, height)| *height < shared_prefix_len)
         };
@@ -187,6 +186,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
 
         let mut next_to_visit = if let Some((node_id, height)) = self.current_nodes_heights.pop() {
             self.current_path.truncate(height);
+            visitor.visit_node::<DB>(self.tree, node_id, height)?;
             self.traverse_one(node_id, height, key)?
         } else {
             // Start from tree root.
@@ -196,6 +196,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
                 self.leaf_hash = None;
                 return Ok(());
             };
+            visitor.visit_node::<DB>(self.tree, node_id, 0)?;
             Some(node_id)
         };
 
@@ -206,7 +207,6 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         );
 
         // Tree traversal :)
-
         loop {
             log::trace!("Loop start cur={:?} key={:b}", self.current_path, key);
 
@@ -214,8 +214,10 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
                 return Ok(());
             };
 
-            visitor.visit_node::<DB>(self.tree, node_id, self.current_path.len())?;
             next_to_visit = self.traverse_one(node_id, self.current_path.len(), key)?;
+            if let Some(next_id) = next_to_visit {
+                visitor.visit_node::<DB>(self.tree, next_id, self.current_path.len())?;
+            }
 
             log::trace!(
                 "Got nodeid={:?} height={}, cur path={:?}, next to visit={:?}",

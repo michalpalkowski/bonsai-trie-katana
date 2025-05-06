@@ -185,6 +185,13 @@ impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id> MerkleTrees<H
         #[cfg(feature = "std")]
         use rayon::prelude::*;
 
+        println!("\n=== Committing MerkleTrees ===");
+        println!("Number of trees: {}", self.trees.len());
+        for (identifier, tree) in self.trees.iter() {
+            println!("Tree identifier: {:?}", identifier);
+            println!("Tree root before commit: {:?}", tree.root_node);
+        }
+
         #[cfg(not(feature = "std"))]
         let db_changes = self
             .trees
@@ -204,15 +211,25 @@ impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id> MerkleTrees<H
             for (key, value) in changes? {
                 match value {
                     InsertOrRemove::Insert(value) => {
+                        println!("Inserting key: {:?} with value: {:?}", key, value);
                         self.db.insert(&key, &value, Some(&mut batch))?;
                     }
                     InsertOrRemove::Remove => {
+                        println!("Removing key: {:?}", key);
                         self.db.remove(&key, Some(&mut batch))?;
                     }
                 }
             }
         }
         self.db.write_batch(batch)?;
+
+        // Print tree roots after commit
+        println!("\nTree roots after commit:");
+        for (identifier, tree) in self.trees.iter() {
+            println!("Tree identifier: {:?}", identifier);
+            println!("Tree root after commit: {:?}", tree.root_node);
+        }
+        println!("Commit finished");
         Ok(())
     }
 
