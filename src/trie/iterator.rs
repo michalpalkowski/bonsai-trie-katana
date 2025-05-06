@@ -265,6 +265,8 @@ mod tests {
         felt::Felt,
         hash::{Pedersen, StarkHash},
     };
+    use crate::id::BasicIdBuilder;
+    use crate::BitVec;
 
     const ONE: Felt = Felt::ONE;
     const TWO: Felt = Felt::TWO;
@@ -298,6 +300,21 @@ mod tests {
         bonsai_storage
             .insert(&[], bits![u8, Msb0; 0,1,0,0,0,0,0,0], &FOUR)
             .unwrap();
+
+        let mut id_builder = BasicIdBuilder::new();
+        let id1 = id_builder.new_id();
+        // bonsai_storage.commit(id1).unwrap();
+        let mut bv = BitVec::new();
+        bv.extend_from_bitslice(&bits![u8, Msb0; 0,0,0,1,0,0,0,0]);
+        let proof_keys: Vec<BitVec> = vec![bv];
+        let multi_proof = bonsai_storage.get_multi_proof(&[], &proof_keys);
+        println!("Multi proof for node 0x1: {:?}", multi_proof.unwrap());
+
+        let mut bv = BitVec::new();
+        bv.extend_from_bitslice(&bits![u8, Msb0; 0,1,0,0,0,0,0,0]);
+        let proof_keys: Vec<BitVec> = vec![bv];
+        let multi_proof = bonsai_storage.get_multi_proof(&[], &proof_keys);
+        println!("Multi proof for node 0x4: {:?}", multi_proof.unwrap());
 
         bonsai_storage.dump();
 
