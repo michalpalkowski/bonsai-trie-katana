@@ -252,6 +252,8 @@ mod tests {
     //!   0x1    0x2       0x3      0x4        
     //! ```
 
+    use crate::id::BasicIdBuilder;
+    use crate::BitVec;
     use crate::{
         databases::{create_rocks_db, RocksDB, RocksDBConfig},
         id::{BasicId, Id},
@@ -265,8 +267,6 @@ mod tests {
         felt::Felt,
         hash::{Pedersen, StarkHash},
     };
-    use crate::id::BasicIdBuilder;
-    use crate::BitVec;
 
     const ONE: Felt = Felt::ONE;
     const TWO: Felt = Felt::TWO;

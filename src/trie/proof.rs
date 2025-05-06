@@ -3,6 +3,7 @@ use super::{
     path::Path,
     tree::{MerkleTree, RootHandle},
 };
+use crate::trie::merkle_node::BinaryNode;
 use crate::{
     id::Id,
     key_value_db::KeyValueDB,
@@ -15,8 +16,10 @@ use crate::{
 };
 use core::{marker::PhantomData, mem};
 use hashbrown::hash_set;
-use starknet_types_core::{felt::Felt, hash::{Poseidon, StarkHash}};
-use crate::trie::merkle_node::BinaryNode;
+use starknet_types_core::{
+    felt::Felt,
+    hash::{Poseidon, StarkHash},
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProofVerificationError {
@@ -176,7 +179,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                 node_id: NodeKey,
                 _prev_height: usize,
             ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
-
                 let proof_node = match tree.get_node_mut::<DB>(node_id)? {
                     Node::Binary(binary_node) => {
                         let (left, right) = (binary_node.left, binary_node.right);
@@ -210,7 +212,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                 });
             }
             iter.traverse_to(&mut visitor, key)?;
-
         }
 
         Ok(visitor.0)
@@ -230,8 +231,8 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         println!("--------------------------------");
 
         let mut new_key = vec![0; 3];
-        new_key[0] = 0;
-        let new_value = Felt::from(500);
+        new_key[0] = 5;
+        let new_test_value = Felt::from(500);
         let new_key_bv = BitVec::from_vec(new_key.clone());
         let test_keys = vec![new_key_bv];
         let test_proof = self.get_multi_proof(db, test_keys.iter())?;
@@ -239,7 +240,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         println!("Prooof for existing value 0: {:?}", test_proof);
         println!("--------------------------------");
 
-        
         // Get current root hash
         let current_root = self.root_hash(db)?;
         println!("current_root: {:?}", current_root);
@@ -247,7 +247,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         // First pass: collect all nodes from the proof
         let mut current_path = BitVec::with_capacity(251);
         let mut current_felt = current_root;
-        let mut path_nodes = Vec::new();  // Store nodes in path for building the tree
+        let mut path_nodes = Vec::new(); // Store nodes in path for building the tree
 
         loop {
             if current_path.len() == key.len() {
@@ -257,14 +257,17 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                 println!("current_path: {:?}", current_path);
                 println!("current_felt: {:?}", current_felt);
                 println!("--------------------------------");
+                // Case 1: We've reached the leaf node - we'll replace its value
                 break;
             }
 
             let Some(node) = proof.0.get(&current_felt) else {
-                return Err(BonsaiStorageError::Trie(format!(
-                    "Missing node in proof at path {:b}",
-                    current_path
-                )));
+                println!("--------------------------------");
+                println!("Missing node in multiproof");
+                println!("current_felt: {:?}", current_felt);
+                println!("--------------------------------");
+                // Case 2: Node not found in proof - we'll create a new path
+                break;
             };
 
             // Store node and its path for later
@@ -287,46 +290,161 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                     };
                 }
                 ProofNode::Edge { child, path } => {
-                    println!("--------------------------------");
-                    println!("Edge node");
-                    println!("path: {:?}", path);
-                    println!("child: {:?}", child);
-                    println!("--------------------------------");
+                    if key.get(current_path.len()..(current_path.len() + path.len()))
+                        != Some(&path.0)
+                    {
+                        // Case 3: Paths diverge - we'll create a binary node at divergence point
+                        break;
+                    }
                     current_path.extend_from_bitslice(&path.0);
                     current_felt = *child;
                 }
             }
         }
 
-        // let new_value_hash = Poseidon::hash_single(&new_value);
-        // Second pass: compute new hashes bottom-up
-        let mut current_hash = new_value;  // Start with the new value's hash
-        for (path, node) in path_nodes.iter().rev() {
-            println!("--------------------------------");
-            println!("Computing hash for node at path {:?}", path);
-            println!("node: {:?}", node);
-            println!("current_hash: {:?}", current_hash);
-            println!("--------------------------------");
+        // Use calculate_new_root_hash to handle all cases:
+        // 1. Replace existing leaf value
+        // 2. Create new path when node not found
+        // 3. Create binary node at divergence point
+        calculate_new_root_hash::<H, DB>(key, new_value, &path_nodes)
+    }
+}
 
-            match node {
-                ProofNode::Binary { left, right } => {
-                    let direction = Direction::from(key[path.len()]);
-                    current_hash = match direction {
-                        Direction::Left => hash_binary_node::<H>(current_hash, *right),
-                        Direction::Right => hash_binary_node::<H>(*left, current_hash),
-                    };
-                }
-                ProofNode::Edge { child, path: edge_path } => {
-                    current_hash = hash_edge_node::<H>(edge_path, current_hash);
-                }
+pub fn calculate_new_root_hash<H: StarkHash, DB: BonsaiDatabase>(
+    key: &BitSlice,
+    new_value: Felt,
+    path_nodes: &Vec<(BitVec, ProofNode)>,
+) -> Result<Felt, BonsaiStorageError<DB::DatabaseError>> {
+    match path_nodes.last() {
+        Some((
+            edge_path_vec,
+            ProofNode::Edge {
+                child,
+                path: edge_path,
+            },
+        )) => {
+            println!("--------------------------------");
+            println!("Edge node");
+            println!("edge_path: {:?}", edge_path);
+            println!("child: {:?}", child);
+            println!("--------------------------------");
+            let edge_height = edge_path_vec.len();
+            let common = common_path(edge_path, edge_height, key);
+            let branch_height = edge_height + common.len();
+
+            if branch_height >= key.len() {
+                println!("Reached end of key - replacing existing value");
+                return Ok(hash_up_merkle_path::<H>(key, new_value, &path_nodes, false));
+            }
+
+            // Otherwise create a new binary node at the divergence point
+            println!("Creating new binary node at height {}", branch_height);
+            let child_height = branch_height + 1;
+            let new_path = key[child_height..].to_bitvec();
+            let old_path = edge_path.0[common.len() + 1..].to_bitvec();
+
+            let new_leaf_hash = new_value;
+            let old_leaf_hash = *child;
+
+            let new = if new_path.is_empty() {
+                new_leaf_hash
+            } else {
+                hash_edge_node::<H>(&Path(new_path), new_leaf_hash)
+            };
+            let old = if old_path.is_empty() {
+                old_leaf_hash
+            } else {
+                hash_edge_node::<H>(&Path(old_path), old_leaf_hash)
+            };
+
+            let new_direction = Direction::from(key[branch_height]);
+            let branch_hash = match new_direction {
+                Direction::Left => hash_binary_node::<H>(new, old),
+                Direction::Right => hash_binary_node::<H>(old, new),
+            };
+
+            let current_hash = if common.is_empty() {
+                branch_hash
+            } else {
+                hash_edge_node::<H>(&Path(edge_path.0[..common.len()].to_bitvec()), branch_hash)
+            };
+
+            let current_hash = hash_up_merkle_path::<H>(key, current_hash, path_nodes, true);
+
+            Ok(current_hash)
+        }
+        Some((path, ProofNode::Binary { left, right })) => {
+            println!("--------------------------------");
+            println!("Binary node");
+            println!("path: {:?}", path);
+            println!("left: {:?}", left);
+            println!("right: {:?}", right);
+            println!("--------------------------------");
+            // If multiproof ends with a binary node (not edge)
+            let direction = Direction::from(key[path.len()]);
+            let current_hash = match direction {
+                Direction::Left => hash_binary_node::<H>(new_value, *right),
+                Direction::Right => hash_binary_node::<H>(*left, new_value),
+            };
+
+            let current_hash = hash_up_merkle_path::<H>(key, current_hash, path_nodes, true);
+
+            Ok(current_hash)
+        }
+        None => {
+            println!("--------------------------------");
+            println!("No nodes in multiproof");
+            println!("key: {:?}", key);
+            println!("new_value: {:?}", new_value);
+            println!("--------------------------------");
+            let final_hash = hash_edge_node::<H>(&Path(key.to_bitvec()), new_value);
+            Ok(final_hash)
+        }
+    }
+}
+
+pub fn common_path<'a>(edge_path: &'a Path, edge_height: usize, key: &BitSlice) -> &'a BitSlice {
+    let key_path = key.iter().skip(edge_height);
+    let common_length = key_path
+        .zip(edge_path.0.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    &edge_path.0[..common_length]
+}
+
+pub fn hash_up_merkle_path<H: StarkHash>(
+    key: &BitSlice,
+    mut current_hash: Felt,
+    path_nodes: &[(BitVec, ProofNode)],
+    skip_last: bool, // czy pominąć ostatni element (np. jeśli już go przetworzyłeś)
+) -> Felt {
+    let iter = if skip_last {
+        path_nodes.iter().rev().skip(1)
+    } else {
+        path_nodes.iter().rev().skip(0)
+    };
+    for (path, node) in iter {
+        println!("--------------------------------");
+        println!("Hashing up merkle path");
+        println!("path: {:?}", path);
+        println!("node: {:?}", node);
+        println!("--------------------------------");
+        match node {
+            ProofNode::Binary { left, right } => {
+                let direction = Direction::from(key[path.len()]);
+                current_hash = match direction {
+                    Direction::Left => hash_binary_node::<H>(current_hash, *right),
+                    Direction::Right => hash_binary_node::<H>(*left, current_hash),
+                };
+            }
+            ProofNode::Edge {
+                path: edge_path, ..
+            } => {
+                current_hash = hash_edge_node::<H>(&edge_path, current_hash);
             }
         }
-
-        println!("--------------------------------");
-        println!("New root hash: {:?}", current_hash);
-        println!("--------------------------------");
-        Ok(current_hash)
     }
+    current_hash
 }
 
 #[cfg(test)]
@@ -399,10 +517,7 @@ mod tests {
     }
 }
 
-
-use crate::{
-    BonsaiStorage, BonsaiStorageConfig,
-};
+use crate::{BonsaiStorage, BonsaiStorageConfig};
 use starknet_types_core::hash::Pedersen;
 
 #[test]
@@ -413,20 +528,24 @@ fn test_merge_trees_multiproof_failure() {
         BonsaiStorage, BonsaiStorageConfig,
     };
     use bitvec::{bits, order::Msb0};
+    use once_cell::sync::Lazy;
     use rocksdb::OptimisticTransactionDB;
     use starknet_types_core::{felt::Felt, hash::Pedersen};
-    use once_cell::sync::Lazy;
     use std::sync::Arc;
     use std::sync::Mutex;
 
     let db = create_rocks_db(tempfile::tempdir().unwrap().path()).unwrap();
-    let identifier1 = vec![1];  
-    let identifier2 = vec![2]; 
-    let identifier3 = vec![3]; 
+    let identifier1 = vec![1];
+    let identifier2 = vec![2];
+    let identifier3 = vec![3];
 
     let config = BonsaiStorageConfig::default();
     let mut bonsai_storage: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-        BonsaiStorage::new(RocksDB::new(&db, RocksDBConfig::default()), config.clone(), 24);
+        BonsaiStorage::new(
+            RocksDB::new(&db, RocksDBConfig::default()),
+            config.clone(),
+            24,
+        );
 
     let mut id_builder = BasicIdBuilder::new();
 
@@ -434,7 +553,9 @@ fn test_merge_trees_multiproof_failure() {
         let mut key = vec![0; 3];
         key[0] = i;
         let value = Felt::from(i as u64 + 100);
-        bonsai_storage.insert(&identifier1, &BitVec::from_vec(key), &value).unwrap();
+        bonsai_storage
+            .insert(&identifier1, &BitVec::from_vec(key), &value)
+            .unwrap();
     }
     let start_id = id_builder.new_id();
     bonsai_storage.commit(start_id).unwrap();
@@ -443,7 +564,11 @@ fn test_merge_trees_multiproof_failure() {
     // let mut bonsai_storage2 =
     //     BonsaiStorage::new(RocksDB::new(&db, RocksDBConfig::default()), config.clone(), 24);
     let mut bonsai_storage3: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-        BonsaiStorage::new(RocksDB::new(&db, RocksDBConfig::default()), config.clone(), 24);
+        BonsaiStorage::new(
+            RocksDB::new(&db, RocksDBConfig::default()),
+            config.clone(),
+            24,
+        );
 
     // let mut txn_storage: BonsaiStorage<BasicId, RocksDBTransaction<'_>, Pedersen> = bonsai_storage
     // .get_transactional_state(start_id, config.clone())
@@ -453,19 +578,18 @@ fn test_merge_trees_multiproof_failure() {
     // let mut txn_storage = bonsai_storage.get_transactional_state(start_id, config.clone())
     // .expect("Transaction not found")
     // .expect("Transactional state not found");
-    
+
     // for i in 5..15 {
     //     let mut key = vec![0; 3];
     //     key[0] = i;
     //     let value = Felt::from(i as u64 + 100);
     //     txn_storage.insert(&identifier2, &BitVec::from_vec(key), &value).unwrap();
     // }
-    //check input permutation 
+    //check input permutation
     let id2 = id_builder.new_id();
 
     // bonsai_storage.merge(txn_storage).unwrap();
 
-    
     let mut keys_and_values = Vec::new();
     for i in 5..15 {
         let mut key = vec![0; 3];
@@ -479,20 +603,21 @@ fn test_merge_trees_multiproof_failure() {
     //         txn_storage.insert(&identifier2, &BitVec::from_vec(key), &value).unwrap();
     //     }
     // }).unwrap();
-    
 
     // bonsai_storage.commit(id2).unwrap();
-    
+
     // Fill third tree with all 15 elements (0-14) - original values
     for i in 0..15 {
         let mut key = vec![0; 3];
         key[0] = i;
         let value = Felt::from(i as u64 + 100);
-        bonsai_storage3.insert(&identifier3, &BitVec::from_vec(key.clone()), &value).unwrap();
+        bonsai_storage3
+            .insert(&identifier3, &BitVec::from_vec(key.clone()), &value)
+            .unwrap();
     }
     let id3 = id_builder.new_id();
     bonsai_storage3.commit(id3).unwrap();
-    
+
     // Check if keys are correctly visible in storage2 after merge
     println!("Checking keys after merge:");
     for i in 0..15 {
@@ -503,92 +628,105 @@ fn test_merge_trees_multiproof_failure() {
         let val3 = bonsai_storage3.get(&identifier3, &key).unwrap();
         println!("Key {}: storage2={:?}, storage3={:?}", i, val2, val3);
     }
-    
+
     println!("Preparing keys for multi_proof");
     // Prepare keys for multi_proof
-    let proof_keys: Vec<BitVec> = (0..15).map(|i| {
-        let mut key = vec![0; 3]; // 24-bit key (3 bytes)
-        key[0] = i;
-        BitVec::from_vec(key)
-    }).collect();
-    
+    let proof_keys: Vec<BitVec> = (0..15)
+        .map(|i| {
+            let mut key = vec![0; 3]; // 24-bit key (3 bytes)
+            key[0] = i;
+            BitVec::from_vec(key)
+        })
+        .collect();
+
     println!("Getting multi_proof for merged tree");
     // Get multi_proof for merged tree
     let merged_proof_result = bonsai_storage.get_multi_proof(&identifier2, &proof_keys);
     println!("Merged proof result: {:?}", merged_proof_result.is_ok());
     let merged_proof = match merged_proof_result {
         Ok(proof) => {
-            println!("Merged proof successfully retrieved, contains {} nodes", proof.0.len());
+            println!(
+                "Merged proof successfully retrieved, contains {} nodes",
+                proof.0.len()
+            );
             proof
-        },
+        }
         Err(e) => {
             println!("Error while getting merged_proof: {:?}", e);
             panic!("Failed to get merged_proof");
         }
     };
-    
+
     println!("Getting multi_proof for reference tree");
     // Get multi_proof for reference tree
     let reference_proof_result = bonsai_storage3.get_multi_proof(&identifier3, &proof_keys);
-    println!("Reference proof result: {:?}", reference_proof_result.is_ok());
+    println!(
+        "Reference proof result: {:?}",
+        reference_proof_result.is_ok()
+    );
     let reference_proof = match reference_proof_result {
         Ok(proof) => {
-            println!("Reference proof successfully retrieved, contains {} nodes", proof.0.len());
+            println!(
+                "Reference proof successfully retrieved, contains {} nodes",
+                proof.0.len()
+            );
             proof
-        },
+        }
         Err(e) => {
             println!("Error while getting reference_proof: {:?}", e);
             panic!("Failed to get reference_proof");
         }
     };
-    
+
     println!("Getting root hash for both trees");
     // Get root hashes
     let root_merged_result = bonsai_storage.root_hash(&identifier2);
     //check if identifier contributes to root hash
     let root_reference_result = bonsai_storage3.root_hash(&identifier3);
-    
+
     println!("Root hash merged_result: {:?}", root_merged_result.is_ok());
-    println!("Root hash reference_result: {:?}", root_reference_result.is_ok());
-    
+    println!(
+        "Root hash reference_result: {:?}",
+        root_reference_result.is_ok()
+    );
+
     let root_merged = match root_merged_result {
         Ok(hash) => {
             println!("Root hash for merged: {:?}", hash);
             hash
-        },
+        }
         Err(e) => {
             println!("Error while getting root_merged: {:?}", e);
             panic!("Failed to get root_merged");
         }
     };
-    
+
     let root_reference = match root_reference_result {
         Ok(hash) => {
             println!("Root hash for reference: {:?}", hash);
             hash
-        },
+        }
         Err(e) => {
             println!("Error while getting root_reference: {:?}", e);
             panic!("Failed to get root_reference");
         }
     };
-    
+
     println!("Verifying proofs - should fail");
     let merged_values_result = merged_proof
         .verify_proof::<Pedersen>(root_merged, proof_keys.iter(), 24)
         .collect::<Result<Vec<_>, _>>();
-    
+
     let reference_values_result = reference_proof
         .verify_proof::<Pedersen>(root_reference, proof_keys.iter(), 24)
         .collect::<Result<Vec<_>, _>>();
-    
+
     // assert_ne!(
     //     merged_values_result.unwrap(),
     //     reference_values_result.unwrap(),
     //     "Values from proofs should be different"
     // );
 }
-
 
 #[test]
 fn test_if_identifier_contributes_to_root_hash() {
@@ -600,12 +738,16 @@ fn test_if_identifier_contributes_to_root_hash() {
     use starknet_types_core::{felt::Felt, hash::Pedersen};
 
     let db = create_rocks_db(tempfile::tempdir().unwrap().path()).unwrap();
-    let identifier1 = vec![1];  
-    let identifier2 = vec![2]; 
+    let identifier1 = vec![1];
+    let identifier2 = vec![2];
 
     let config = BonsaiStorageConfig::default();
     let mut bonsai_storage: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-        BonsaiStorage::new(RocksDB::new(&db, RocksDBConfig::default()), config.clone(), 24);
+        BonsaiStorage::new(
+            RocksDB::new(&db, RocksDBConfig::default()),
+            config.clone(),
+            24,
+        );
 
     let mut id_builder = BasicIdBuilder::new();
 
@@ -613,29 +755,43 @@ fn test_if_identifier_contributes_to_root_hash() {
         let mut key = vec![0; 3];
         key[0] = i;
         let value = Felt::from(i as u64 + 100);
-        bonsai_storage.insert(&identifier1, &BitVec::from_vec(key), &value).unwrap();
+        bonsai_storage
+            .insert(&identifier1, &BitVec::from_vec(key), &value)
+            .unwrap();
     }
     let id1 = id_builder.new_id();
     bonsai_storage.commit(id1).unwrap();
 
     let mut bonsai_storage2: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-        BonsaiStorage::new(RocksDB::new(&db, RocksDBConfig::default()), config.clone(), 24);
+        BonsaiStorage::new(
+            RocksDB::new(&db, RocksDBConfig::default()),
+            config.clone(),
+            24,
+        );
 
     for i in 0..5 {
         let mut key = vec![0; 3];
         key[0] = i;
         let value = Felt::from(i as u64 + 100);
-        bonsai_storage2.insert(&identifier2, &BitVec::from_vec(key), &value).unwrap();
+        bonsai_storage2
+            .insert(&identifier2, &BitVec::from_vec(key), &value)
+            .unwrap();
     }
-        
+
     let id2 = id_builder.new_id();
     bonsai_storage2.commit(id2).unwrap();
-    
+
     let root_merged_result = bonsai_storage.root_hash(&identifier1);
     let root_reference_result = bonsai_storage2.root_hash(&identifier2);
-    
-    println!("Root hash for identifier 1: {:?}", root_merged_result.unwrap());
-    println!("Root hash for identifier 2: {:?}", root_reference_result.unwrap());
+
+    println!(
+        "Root hash for identifier 1: {:?}",
+        root_merged_result.unwrap()
+    );
+    println!(
+        "Root hash for identifier 2: {:?}",
+        root_reference_result.unwrap()
+    );
 }
 
 #[should_panic(expected = "The tree has uncommited changes")]
@@ -649,11 +805,15 @@ fn test_if_uncommited_changes_fails() {
     use starknet_types_core::{felt::Felt, hash::Pedersen};
 
     let db = create_rocks_db(tempfile::tempdir().unwrap().path()).unwrap();
-    let identifier1 = vec![1];  
+    let identifier1 = vec![1];
 
     let config = BonsaiStorageConfig::default();
     let mut bonsai_storage: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-        BonsaiStorage::new(RocksDB::new(&db, RocksDBConfig::default()), config.clone(), 24);
+        BonsaiStorage::new(
+            RocksDB::new(&db, RocksDBConfig::default()),
+            config.clone(),
+            24,
+        );
 
     let mut id_builder = BasicIdBuilder::new();
 
@@ -661,9 +821,11 @@ fn test_if_uncommited_changes_fails() {
         let mut key = vec![0; 3];
         key[0] = i;
         let value = Felt::from(i as u64 + 100);
-        bonsai_storage.insert(&identifier1, &BitVec::from_vec(key), &value).unwrap();
+        bonsai_storage
+            .insert(&identifier1, &BitVec::from_vec(key), &value)
+            .unwrap();
     }
-    
+
     let root_result1 = bonsai_storage.root_hash(&identifier1);
     println!("Root hash before commit: {:?}", root_result1.unwrap());
 
@@ -683,12 +845,16 @@ fn test_merkle_proof_in_different_order() {
     use starknet_types_core::{felt::Felt, hash::Pedersen};
 
     let db = create_rocks_db(tempfile::tempdir().unwrap().path()).unwrap();
-    let identifier1 = vec![1];  
-    let identifier2 = vec![2]; 
+    let identifier1 = vec![1];
+    let identifier2 = vec![2];
 
     let config = BonsaiStorageConfig::default();
     let mut bonsai_storage: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-        BonsaiStorage::new(RocksDB::new(&db, RocksDBConfig::default()), config.clone(), 24);
+        BonsaiStorage::new(
+            RocksDB::new(&db, RocksDBConfig::default()),
+            config.clone(),
+            24,
+        );
 
     let mut id_builder = BasicIdBuilder::new();
 
@@ -696,7 +862,9 @@ fn test_merkle_proof_in_different_order() {
         let mut key = vec![0; 3];
         key[0] = i;
         let value = Felt::from(i as u64 + 100);
-        bonsai_storage.insert(&identifier1, &BitVec::from_vec(key.clone()), &value).unwrap();
+        bonsai_storage
+            .insert(&identifier1, &BitVec::from_vec(key.clone()), &value)
+            .unwrap();
         println!("Inserted key ascending: {:?}, value: {:?}", key, value);
     }
     let id1 = id_builder.new_id();
@@ -704,35 +872,49 @@ fn test_merkle_proof_in_different_order() {
     bonsai_storage.commit(id1).unwrap();
 
     let mut bonsai_storage2: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-        BonsaiStorage::new(RocksDB::new(&db, RocksDBConfig::default()), config.clone(), 24);
+        BonsaiStorage::new(
+            RocksDB::new(&db, RocksDBConfig::default()),
+            config.clone(),
+            24,
+        );
 
-    for i in (0..5).rev(){
+    for i in (0..5).rev() {
         let mut key = vec![0; 3];
         key[0] = i;
         let value = Felt::from(i as u64 + 100);
-        bonsai_storage2.insert(&identifier2, &BitVec::from_vec(key.clone()), &value).unwrap();
+        bonsai_storage2
+            .insert(&identifier2, &BitVec::from_vec(key.clone()), &value)
+            .unwrap();
         println!("Inserted key descending: {:?}, value: {:?}", key, value);
     }
-        
+
     let id2 = id_builder.new_id();
     bonsai_storage2.commit(id2).unwrap();
-    
+
     let ascending_root_hash = bonsai_storage.root_hash(&identifier1);
     let descending_root_hash = bonsai_storage2.root_hash(&identifier2);
 
-    let proof_keys: Vec<BitVec> = (0..5).map(|i| {
-        let mut key = vec![0; 3];
-        key[0] = i;
-        BitVec::from_vec(key)
-    }).collect();
+    let proof_keys: Vec<BitVec> = (0..5)
+        .map(|i| {
+            let mut key = vec![0; 3];
+            key[0] = i;
+            BitVec::from_vec(key)
+        })
+        .collect();
 
     let ascending_trie_proof = bonsai_storage.get_multi_proof(&identifier1, &proof_keys);
     // println!("Ascending trie proof: {:?}", ascending_trie_proof.unwrap());
     let descending_trie_proof = bonsai_storage2.get_multi_proof(&identifier2, &proof_keys);
     // println!("Descending trie proof: {:?}", descending_trie_proof.unwrap());
 
-    println!("Root hash for identifier 1 ascending: {:?}", ascending_root_hash.unwrap());
-    println!("Root hash for identifier 2 descending: {:?}", descending_root_hash.unwrap());
+    println!(
+        "Root hash for identifier 1 ascending: {:?}",
+        ascending_root_hash.unwrap()
+    );
+    println!(
+        "Root hash for identifier 2 descending: {:?}",
+        descending_root_hash.unwrap()
+    );
 }
 
 #[test]
@@ -745,12 +927,16 @@ fn test_printing_trie() {
     use starknet_types_core::{felt::Felt, hash::Pedersen};
 
     let db = create_rocks_db(tempfile::tempdir().unwrap().path()).unwrap();
-    let identifier1 = vec![1];  
-    let identifier2 = vec![2]; 
+    let identifier1 = vec![1];
+    let identifier2 = vec![2];
 
     let config = BonsaiStorageConfig::default();
     let mut bonsai_storage: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-        BonsaiStorage::new(RocksDB::new(&db, RocksDBConfig::default()), config.clone(), 24);
+        BonsaiStorage::new(
+            RocksDB::new(&db, RocksDBConfig::default()),
+            config.clone(),
+            24,
+        );
 
     let mut id_builder = BasicIdBuilder::new();
 
@@ -758,41 +944,29 @@ fn test_printing_trie() {
         let mut key = vec![0; 3];
         key[0] = i;
         let value = Felt::from(i as u64 + 100);
-        bonsai_storage.insert(&identifier1, &BitVec::from_vec(key), &value).unwrap();
+        bonsai_storage
+            .insert(&identifier1, &BitVec::from_vec(key), &value)
+            .unwrap();
     }
     let id1 = id_builder.new_id();
 
     bonsai_storage.commit(id1).unwrap();
 
-    println!("Trie root hash: {:?}", bonsai_storage.root_hash(&identifier1).unwrap());
+    println!(
+        "Trie root hash: {:?}",
+        bonsai_storage.root_hash(&identifier1).unwrap()
+    );
 
-    let proof_keys: Vec<BitVec> = (0..1).map(|i| {
-        let mut key = vec![0; 3];
-        key[0] = i;
-        BitVec::from_vec(key)
-    }).collect();
+    let proof_keys: Vec<BitVec> = (0..1)
+        .map(|i| {
+            let mut key = vec![0; 3];
+            key[0] = i;
+            BitVec::from_vec(key)
+        })
+        .collect();
 
     let merged_proof_result = bonsai_storage.get_multi_proof(&identifier1, &proof_keys);
     println!("Merged proof: {:?}", merged_proof_result.unwrap());
-
-    // let mut bonsai_storage2: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-    //     BonsaiStorage::new(RocksDB::new(&db, RocksDBConfig::default()), config.clone(), 24);
-
-    // for i in 0..5 {
-    //     let mut key = vec![0; 3];
-    //     key[0] = i;
-    //     let value = Felt::from(i as u64 + 100);
-    //     bonsai_storage2.insert(&identifier2, &BitVec::from_vec(key), &value).unwrap();
-    // }
-        
-    // let id2 = id_builder.new_id();
-    // bonsai_storage2.commit(id2).unwrap();
-    
-    // let root_merged_result = bonsai_storage.root_hash(&identifier1);
-    // let root_reference_result = bonsai_storage2.root_hash(&identifier2);
-    
-    // println!("Root hash for identifier 1: {:?}", root_merged_result.unwrap());
-    // println!("Root hash for identifier 2: {:?}", root_reference_result.unwrap());
 }
 
 #[test]
@@ -810,9 +984,17 @@ fn test_next_root() {
 
     let config = BonsaiStorageConfig::default();
     let mut bonsai_storage1: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-        BonsaiStorage::new(RocksDB::new(&db, RocksDBConfig::default()), config.clone(), 24);
+        BonsaiStorage::new(
+            RocksDB::new(&db, RocksDBConfig::default()),
+            config.clone(),
+            24,
+        );
     let mut bonsai_storage2: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-        BonsaiStorage::new(RocksDB::new(&db, RocksDBConfig::default()), config.clone(), 24);
+        BonsaiStorage::new(
+            RocksDB::new(&db, RocksDBConfig::default()),
+            config.clone(),
+            24,
+        );
 
     let mut id_builder = BasicIdBuilder::new();
 
@@ -821,8 +1003,12 @@ fn test_next_root() {
         let mut key = vec![0; 3];
         key[0] = i;
         let value = Felt::from(i as u64 + 100);
-        bonsai_storage1.insert(&identifier, &BitVec::from_vec(key.clone()), &value).unwrap();
-        bonsai_storage2.insert(&identifier2, &BitVec::from_vec(key), &value).unwrap();
+        bonsai_storage1
+            .insert(&identifier, &BitVec::from_vec(key.clone()), &value)
+            .unwrap();
+        bonsai_storage2
+            .insert(&identifier2, &BitVec::from_vec(key), &value)
+            .unwrap();
     }
 
     // Commit both trees
@@ -844,14 +1030,22 @@ fn test_next_root() {
     let new_key_bv = BitVec::from_vec(new_key.clone());
 
     // Get the tree from bonsai_storage1
-    let tree1 = bonsai_storage1.tries.trees.get_mut(&smallvec::smallvec![1]).unwrap();
-    
+    let tree1 = bonsai_storage1
+        .tries
+        .trees
+        .get_mut(&smallvec::smallvec![1])
+        .unwrap();
+
     // Calculate next root using our function
-    let next_root = tree1.next_root(&bonsai_storage1.tries.db, &new_key_bv, new_value).unwrap();
+    let next_root = tree1
+        .next_root(&bonsai_storage1.tries.db, &new_key_bv, new_value)
+        .unwrap();
     println!("Calculated next root: {:?}", next_root);
 
     // Actually insert the value into the second tree
-    bonsai_storage2.insert(&identifier2, &new_key_bv, &new_value).unwrap();
+    bonsai_storage2
+        .insert(&identifier2, &new_key_bv, &new_value)
+        .unwrap();
     bonsai_storage2.commit(id_builder.new_id()).unwrap();
 
     // Get the actual root hash after insertion
@@ -861,4 +1055,3 @@ fn test_next_root() {
     // Verify that our calculated next root matches the actual root
     assert_eq!(next_root, actual_root, "Next root calculation failed");
 }
-
