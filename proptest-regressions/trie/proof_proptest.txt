@@ -1,8 +1,0 @@
-# Seeds for failure cases proptest has generated in the past. It is
-# automatically read and these particular cases re-run before any
-# novel cases are generated.
-#
-# It is recommended to check this file in to source control so that
-# everyone who runs the test benefits from these saved cases.
-cc d2e745ed4e7b004f46576cfb72a25d336d50e454d7d0874754614762d93388c3 # shrinks to max_height = 4, key = BitVec<u8, bitvec::order::Msb0> { addr: 0x7f51a01850d0, head: 000, bits: 24, capacity: 24 } [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], value = 0x64
-cc 06d66153ef35e9622b1818ca5d8d27e48e6e871729b7ae438af456a484c9d223 # shrinks to max_height = 4, initial_keys = [], new_key = BitVec<u8, bitvec::order::Msb0> { addr: 0x7f519a5a8370, head: 000, bits: 24, capacity: 24 } [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], new_value = 0x64
