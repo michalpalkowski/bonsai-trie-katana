@@ -599,8 +599,8 @@ fn test_next_root() {
     let tree1 = bonsai_storage1
         .tries
         .trees
-        .get_mut(&smallvec::smallvec![1])
-        .unwrap();
+        .entry(smallvec::smallvec![1])
+        .or_insert_with(|| MerkleTree::new(identifier.into(), 24));
 
     let proof_keys = vec![&new_key_bv];
     let proof = tree1
@@ -637,6 +637,7 @@ fn test_next_root() {
 
 #[cfg(test)]
 mod proof_proptest {
+    use crate::trie::tree::MerkleTree;
     use crate::{
         databases::{create_rocks_db, RocksDB, RocksDBConfig},
         id::{BasicId, BasicIdBuilder},
@@ -655,11 +656,15 @@ mod proof_proptest {
     }
 
     fn arb_key_value(max_height: u8) -> impl Strategy<Value = (BitVec, Felt)> {
-        prop::collection::vec(any::<bool>(), max_height as usize).prop_map(|bits| {
-            let key = bits.into_iter().collect();
-            let value = Felt::from(rand::random::<u8>() as u64 + 100);
-            (key, value)
-        })
+        (
+            prop::collection::vec(any::<bool>(), max_height as usize),
+            u8::ANY,
+        )
+            .prop_map(|(bits, v)| {
+                let key = bits.into_iter().collect();
+                let value = Felt::from(v as u64 + 100);
+                (key, value)
+            })
     }
 
     // Generator for random values
@@ -670,19 +675,41 @@ mod proof_proptest {
         })
     }
 
+    fn arb_power_of_two_keys(max_height: u8) -> impl Strategy<Value = Vec<(BitVec, Felt)>> {
+        (0..8).prop_flat_map(move |power| {
+            let num_keys = 1 << power;
+            prop::collection::vec(arb_key_value(max_height), num_keys as usize)
+        })
+    }
+
+    fn select_random_key_value_from_initial_keys(
+        initial_keys_values: Vec<(BitVec, Felt)>,
+    ) -> (BitVec, Felt, Vec<(BitVec, Felt)>) {
+        let random_index = rand::random::<usize>() % initial_keys_values.len();
+        let (removed_key, removed_value) = initial_keys_values[random_index].clone();
+
+        // Create a new vector without the removed key-value pair
+        let remaining_keys_values: Vec<(BitVec, Felt)> = initial_keys_values
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| *i != random_index)
+            .map(|(_, kv)| kv)
+            .collect();
+
+        (removed_key, removed_value, remaining_keys_values)
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::default())]
         #[test]
         fn test_next_root_height_8(
-            initial_keys_values in vec(arb_key_value(8), 1..50),
-            new_key in arb_key(8),
-            new_value in arb_value(),
+            initial_keys_values in arb_power_of_two_keys(8),
         ) {
-            test_next_root(8, initial_keys_values, new_key, new_value);
+            // Randomly select a key-value pair to remove and use as new_key/new_value
+            let (removed_key, removed_value, remaining_keys_values) = select_random_key_value_from_initial_keys(initial_keys_values);
+            test_next_root(8, remaining_keys_values, removed_key, removed_value);
         }
     }
-    //add test where key is chosen from initial keys_values randomly
-    //add egde case when no initial keys are provided
     //add cases where initial keys count is 2^n from 0 to 251
     //refator algorithm to have less if's
 
@@ -690,11 +717,11 @@ mod proof_proptest {
         #![proptest_config(ProptestConfig::default())]
         #[test]
         fn test_next_root_height_24(
-            initial_keys_values in vec(arb_key_value(24), 1..50),
-            new_key in arb_key(24),
-            new_value in arb_value(),
+            initial_keys_values in arb_power_of_two_keys(24),
         ) {
-            test_next_root(24, initial_keys_values, new_key, new_value);
+            // Randomly select a key-value pair to remove and use as new_key/new_value
+            let (removed_key, removed_value, remaining_keys_values) = select_random_key_value_from_initial_keys(initial_keys_values);
+            test_next_root(24, remaining_keys_values, removed_key, removed_value);
         }
     }
 
@@ -702,11 +729,22 @@ mod proof_proptest {
         #![proptest_config(ProptestConfig::default())]
         #[test]
         fn test_next_root_height_251(
-            initial_keys_values in vec(arb_key_value(251), 1..50),
-            new_key in arb_key(251),
+            initial_keys_values in vec(arb_key_value(251), 1..50), // minimum 1 key to ensure we can remove one
+        ) {
+            // Randomly select a key-value pair to remove and use as new_key/new_value
+            let (removed_key, removed_value, remaining_keys_values) = select_random_key_value_from_initial_keys(initial_keys_values);
+            test_next_root(251, remaining_keys_values, removed_key, removed_value);
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::default())]
+        #[test]
+        fn test_next_root_empty_initial(
+            new_key in arb_key(8),
             new_value in arb_value(),
         ) {
-            test_next_root(251, initial_keys_values, new_key, new_value);
+            test_next_root(8, vec![], new_key, new_value);
         }
     }
 
@@ -717,7 +755,6 @@ mod proof_proptest {
         new_key: BitVec,
         new_value: Felt,
     ) {
-        assert!(initial_keys_values.len() != 0 as usize);
         let db = create_rocks_db(tempfile::tempdir().unwrap().path()).unwrap();
         let identifier1 = vec![1];
         let identifier2 = vec![2];
@@ -751,11 +788,12 @@ mod proof_proptest {
         // This has to be done before second tree commit
         let current_root = bonsai_storage1.root_hash(&identifier1).unwrap();
         // Get the tree from bonsai_storage1
+
         let tree1 = bonsai_storage1
             .tries
             .trees
-            .get_mut(&smallvec::smallvec![1])
-            .unwrap();
+            .entry(smallvec::smallvec![1])
+            .or_insert_with(|| MerkleTree::new(identifier1.into(), height));
 
         // This has to be done before second tree commit
         let mut proof_keys = vec![&new_key];
