@@ -710,8 +710,6 @@ mod proof_proptest {
             test_next_root(8, remaining_keys_values, removed_key, removed_value);
         }
     }
-    //add cases where initial keys count is 2^n from 0 to 251
-    //refator algorithm to have less if's
 
     proptest! {
         #![proptest_config(ProptestConfig::default())]
