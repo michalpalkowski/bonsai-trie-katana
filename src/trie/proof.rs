@@ -235,10 +235,9 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
     /// # Returns
     ///
     /// The new root hash after the update.
-    pub fn next_root<DB: BonsaiDatabase, ID: Id>(
+    pub fn next_root<DB: BonsaiDatabase, K: AsRef<BitSlice>>(
         &mut self,
-        db: &KeyValueDB<DB, ID>,
-        key: &BitSlice,
+        key: K,
         new_value: Felt,
         current_root: Felt,
         proof: &MultiProof,
@@ -248,7 +247,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         let mut path_nodes = Vec::new();
 
         loop {
-            if current_path.len() == key.len() {
+            if current_path.len() == key.as_ref().len() {
                 break;
             }
 
@@ -260,7 +259,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
 
             match node {
                 ProofNode::Binary { left, right } => {
-                    let direction = Direction::from(key[current_path.len()]);
+                    let direction = Direction::from(key.as_ref()[current_path.len()]);
                     current_path.push(direction.into());
                     current_felt = match direction {
                         Direction::Left => *left,
@@ -268,7 +267,9 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                     };
                 }
                 ProofNode::Edge { child, path } => {
-                    if key.get(current_path.len()..(current_path.len() + path.len()))
+                    if key
+                        .as_ref()
+                        .get(current_path.len()..(current_path.len() + path.len()))
                         != Some(&path.0)
                     {
                         break;
@@ -279,7 +280,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
             }
         }
 
-        calculate_new_root_hash::<H, DB>(key, new_value, &path_nodes)
+        calculate_new_root_hash::<H, DB>(key.as_ref(), new_value, &path_nodes)
     }
 }
 
@@ -547,6 +548,7 @@ fn test_next_root() {
         id::{BasicId, BasicIdBuilder},
         BonsaiStorage, BonsaiStorageConfig,
     };
+    use bitvec::prelude::Msb0;
     use starknet_types_core::{felt::Felt, hash::Pedersen};
 
     let db = create_rocks_db(tempfile::tempdir().unwrap().path()).unwrap();
@@ -607,8 +609,7 @@ fn test_next_root() {
 
     // Calculate next root using our function
     let next_root = tree1
-        .next_root(
-            &bonsai_storage1.tries.db,
+        .next_root::<RocksDB<'_, BasicId>, &bitvec::vec::BitVec<u8, Msb0>>(
             &new_key_bv,
             new_value,
             current_root,
@@ -641,6 +642,7 @@ mod proof_proptest {
         id::{BasicId, BasicIdBuilder},
         BitVec, BonsaiStorage, BonsaiStorageConfig,
     };
+    use bitvec::prelude::Msb0;
     use proptest::collection::vec;
     use proptest::num::u8;
     use proptest::prelude::*;
@@ -650,6 +652,14 @@ mod proof_proptest {
     fn arb_key(max_height: u8) -> impl Strategy<Value = BitVec> {
         prop::collection::vec(any::<bool>(), max_height as usize)
             .prop_map(|bits| bits.into_iter().collect())
+    }
+
+    fn arb_key_value(max_height: u8) -> impl Strategy<Value = (BitVec, Felt)> {
+        prop::collection::vec(any::<bool>(), max_height as usize).prop_map(|bits| {
+            let key = bits.into_iter().collect();
+            let value = Felt::from(rand::random::<u8>() as u64 + 100);
+            (key, value)
+        })
     }
 
     // Generator for random values
@@ -664,23 +674,27 @@ mod proof_proptest {
         #![proptest_config(ProptestConfig::default())]
         #[test]
         fn test_next_root_height_8(
-            initial_keys in vec(arb_key(8), 1..50),
+            initial_keys_values in vec(arb_key_value(8), 1..50),
             new_key in arb_key(8),
             new_value in arb_value(),
         ) {
-            test_next_root(8, initial_keys, new_key, new_value);
+            test_next_root(8, initial_keys_values, new_key, new_value);
         }
     }
+    //add test where key is chosen from initial keys_values randomly
+    //add egde case when no initial keys are provided
+    //add cases where initial keys count is 2^n from 0 to 251
+    //refator algorithm to have less if's
 
     proptest! {
         #![proptest_config(ProptestConfig::default())]
         #[test]
         fn test_next_root_height_24(
-            initial_keys in vec(arb_key(24), 1..50),
+            initial_keys_values in vec(arb_key_value(24), 1..50),
             new_key in arb_key(24),
             new_value in arb_value(),
         ) {
-            test_next_root(24, initial_keys, new_key, new_value);
+            test_next_root(24, initial_keys_values, new_key, new_value);
         }
     }
 
@@ -688,17 +702,22 @@ mod proof_proptest {
         #![proptest_config(ProptestConfig::default())]
         #[test]
         fn test_next_root_height_251(
-            initial_keys in vec(arb_key(251), 1..50),
+            initial_keys_values in vec(arb_key_value(251), 1..50),
             new_key in arb_key(251),
             new_value in arb_value(),
         ) {
-            test_next_root(251, initial_keys, new_key, new_value);
+            test_next_root(251, initial_keys_values, new_key, new_value);
         }
     }
 
     // Helper function to run the test
-    fn test_next_root(height: u8, initial_keys: Vec<BitVec>, new_key: BitVec, new_value: Felt) {
-        assert!(initial_keys.len() != 0 as usize);
+    fn test_next_root(
+        height: u8,
+        initial_keys_values: Vec<(BitVec, Felt)>,
+        new_key: BitVec,
+        new_value: Felt,
+    ) {
+        assert!(initial_keys_values.len() != 0 as usize);
         let db = create_rocks_db(tempfile::tempdir().unwrap().path()).unwrap();
         let identifier1 = vec![1];
         let identifier2 = vec![2];
@@ -720,10 +739,9 @@ mod proof_proptest {
         let mut id_builder = BasicIdBuilder::new();
 
         // Insert initial values
-        for (i, key) in initial_keys.iter().enumerate() {
-            let value = Felt::from(i as u64 + 100);
-            bonsai_storage1.insert(&identifier1, key, &value).unwrap();
-            bonsai_storage2.insert(&identifier2, key, &value).unwrap();
+        for (key, value) in initial_keys_values.iter() {
+            bonsai_storage1.insert(&identifier1, key, value).unwrap();
+            bonsai_storage2.insert(&identifier2, key, value).unwrap();
         }
 
         // Commit both trees
@@ -747,8 +765,7 @@ mod proof_proptest {
 
         // Calculate next root using our function
         let next_root = tree1
-            .next_root(
-                &bonsai_storage1.tries.db,
+            .next_root::<RocksDB<'_, BasicId>, &bitvec::vec::BitVec<u8, Msb0>>(
                 &new_key,
                 new_value,
                 current_root,
@@ -787,28 +804,43 @@ mod proof_proptest {
             for i in 0..height {
                 base_key.push(i % 2 == 0);
             }
-            let initial_keys = vec![base_key.clone()];
+            let initial_keys_values = vec![(base_key.clone(), Felt::from(100))];
 
             // Case 1: Empty key (all zeros)
             let mut empty_key = BitVec::with_capacity(height as usize);
             for _ in 0..height {
                 empty_key.push(false);
             }
-            test_next_root(height, initial_keys.clone(), empty_key, Felt::from(100));
+            test_next_root(
+                height,
+                initial_keys_values.clone(),
+                empty_key,
+                Felt::from(100),
+            );
 
             // Case 2: Full key (all ones)
             let mut full_key = BitVec::with_capacity(height as usize);
             for _ in 0..height {
                 full_key.push(true);
             }
-            test_next_root(height, initial_keys.clone(), full_key, Felt::from(200));
+            test_next_root(
+                height,
+                initial_keys_values.clone(),
+                full_key,
+                Felt::from(200),
+            );
 
             // Case 3: Alternating bits
             let mut alt_key = BitVec::with_capacity(height as usize);
             for i in 0..height {
                 alt_key.push(i % 2 == 0);
             }
-            test_next_root(height, initial_keys.clone(), alt_key, Felt::from(300));
+            test_next_root(
+                height,
+                initial_keys_values.clone(),
+                alt_key,
+                Felt::from(300),
+            );
 
             // Case 4: Single bit set at different positions
             for pos in 0..height {
@@ -818,7 +850,7 @@ mod proof_proptest {
                 }
                 test_next_root(
                     height,
-                    initial_keys.clone(),
+                    initial_keys_values.clone(),
                     single_bit_key,
                     Felt::from(400 + pos as u64),
                 );
@@ -830,7 +862,7 @@ mod proof_proptest {
             for _ in 1..height {
                 key.push(false);
             }
-            test_next_root(height, initial_keys.clone(), key, Felt::from(600));
+            test_next_root(height, initial_keys_values.clone(), key, Felt::from(600));
         }
     }
 }
