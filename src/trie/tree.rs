@@ -139,7 +139,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
 
         let node_id = self.nodes.insert(binary_node);
 
-        if self.root_node.is_none() {
+        if height == 0 {
             self.root_node = Some(RootHandle::Loaded(node_id));
         }
 
@@ -162,7 +162,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
 
         let node_id = self.nodes.insert(edge_node);
 
-        if self.root_node.is_none() {
+        if height == 0 {
             self.root_node = Some(RootHandle::Loaded(node_id));
         }
 

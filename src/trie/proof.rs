@@ -534,11 +534,11 @@ fn test_if_uncommited_changes_fails() {
     }
 
     // Test root hash before commit
-    let root_result1 = bonsai_storage.root_hash(&identifier1);
+    let root_result1 = bonsai_storage.root_hash(&identifier1).unwrap();
 
     // Commit changes and test root hash after commit
     bonsai_storage.commit(id_builder.new_id()).unwrap();
-    let root_result2 = bonsai_storage.root_hash(&identifier1);
+    let root_result2 = bonsai_storage.root_hash(&identifier1).unwrap();
 }
 
 #[test]
