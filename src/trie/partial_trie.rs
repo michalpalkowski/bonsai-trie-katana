@@ -7,7 +7,6 @@ use crate::databases::RocksDB;
 use crate::id::BasicId;
 use crate::trie::proof::common_path;
 use crate::trie::proof::ProofVerificationError;
-use crate::trie::tree::bitslice_to_bytes;
 use crate::trie::tree::InsertOrRemove;
 use crate::BonsaiStorageError;
 use crate::ByteVec;
@@ -24,7 +23,7 @@ pub enum PartialTrieError {
     #[error(transparent)]
     ProofVerificationError(#[from] ProofVerificationError),
 }
-trait PartialTrieVisitor<H: StarkHash> {
+pub(crate) trait PartialTrieVisitor<H: StarkHash> {
     fn visit_proof_nodes(
         &mut self,
         node: &ProofNode,
@@ -33,7 +32,7 @@ trait PartialTrieVisitor<H: StarkHash> {
     ) -> Result<VisitResult, PartialTrieError>;
 }
 
-struct NextRootVisitor<H: StarkHash> {
+pub(crate) struct NextRootVisitor<H: StarkHash> {
     path_nodes: Vec<(ProofNode, u64)>,
     current_path: BitVec,
     current_felt: Felt,
@@ -89,7 +88,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         }
     }
 
-    fn next_root(
+    pub fn next_root(
         &mut self,
         key: &BitSlice,
         value: Felt,
@@ -301,7 +300,7 @@ struct PathSplit<H: StarkHash> {
 }
 
 #[derive(Debug)]
-enum VisitResult {
+pub(crate) enum VisitResult {
     Continue,
     Break,
 }
@@ -354,11 +353,11 @@ impl<H: StarkHash> PathSplit<H> {
         };
 
         let new_direction = Direction::from(self.key[self.branch_height as usize]);
-        let branch_hash = match new_direction {
+
+        match new_direction {
             Direction::Left => hash_binary_node::<H>(new_hash, old_hash),
             Direction::Right => hash_binary_node::<H>(old_hash, new_hash),
-        };
-        branch_hash
+        }
     }
 }
 
@@ -369,11 +368,8 @@ fn hash_up_merkle_path<H: StarkHash + Send + Sync>(
     skip_last: bool, // whether to skip the last element (e.g. if it has already been processed)
     trie: &mut MerkleTree<H>,
 ) -> Felt {
-    let iter = if skip_last {
-        path_nodes.iter().rev().skip(1)
-    } else {
-        path_nodes.iter().rev().skip(0)
-    };
+    let iter = path_nodes.iter().rev().skip(if skip_last { 1 } else { 0 });
+
     for (node, height) in iter {
         match node {
             ProofNode::Binary { left, right } => {
@@ -395,7 +391,7 @@ fn hash_up_merkle_path<H: StarkHash + Send + Sync>(
             }
             ProofNode::Edge {
                 path: edge_path,
-                child,
+                child: _,
             } => {
                 let edge_node = hash_edge_node::<H>(edge_path, current_hash);
                 trie.insert_edge_node(*height, edge_path, current_hash, edge_node)

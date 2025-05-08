@@ -424,7 +424,7 @@ pub fn hash_up_merkle_path<H: StarkHash>(
             ProofNode::Edge {
                 path: edge_path, ..
             } => {
-                current_hash = hash_edge_node::<H>(&edge_path, current_hash);
+                current_hash = hash_edge_node::<H>(edge_path, current_hash);
             }
         }
     }
