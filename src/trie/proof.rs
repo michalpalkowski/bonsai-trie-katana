@@ -49,6 +49,8 @@ pub enum ProofVerificationError {
         expected: Felt,
         got: Felt,
     },
+    #[error("Invalid proof")]
+    InvalidProof,
 }
 
 #[derive(Debug, Clone, PartialEq)]
