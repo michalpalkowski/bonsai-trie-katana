@@ -152,6 +152,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         path: &Path,
         child: Felt,
         hash: Felt,
+        key: &BitSlice,
     ) -> Result<(), PartialTrieError> {
         let edge_node = Node::Edge(EdgeNode {
             hash: Some(hash),
@@ -165,6 +166,9 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         if height == 0 {
             self.root_node = Some(RootHandle::Loaded(node_id));
         }
+
+        // let key_bytes = bitslice_to_bytes(&key[..height as usize]);
+        // self.death_row.insert(TrieKey::Trie(key_bytes));
 
         Ok(())
     }

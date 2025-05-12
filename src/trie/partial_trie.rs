@@ -7,7 +7,9 @@ use crate::databases::RocksDB;
 use crate::id::BasicId;
 use crate::trie::proof::common_path;
 use crate::trie::proof::ProofVerificationError;
+use crate::trie::tree::bitslice_to_bytes;
 use crate::trie::tree::InsertOrRemove;
+use crate::trie::TrieKey;
 use crate::BonsaiStorageError;
 use crate::ByteVec;
 use crate::Id;
@@ -23,33 +25,28 @@ pub enum PartialTrieError {
     #[error(transparent)]
     ProofVerificationError(#[from] ProofVerificationError),
 }
-pub(crate) trait PartialTrieVisitor<H: StarkHash> {
-    fn visit_proof_nodes(
-        &mut self,
-        node: &ProofNode,
-        path: &BitSlice,
-    ) -> Result<VisitResult, PartialTrieError>;
 
-    fn update_path_and_felt(&mut self, path: &BitSlice, height: usize, node: &ProofNode);
-}
-
-pub(crate) struct NextRootVisitor<H: StarkHash> {
+pub(crate) struct FullTrieVisitor<H: StarkHash> {
     path_nodes: Vec<(ProofNode, u64)>,
     current_path: BitVec,
     current_felt: Felt,
     _hasher: PhantomData<H>,
 }
 
-impl<H: StarkHash> PartialTrieVisitor<H> for NextRootVisitor<H> {
+pub(crate) struct PartialTrieVisitor<H: StarkHash> {
+    path_nodes: Vec<(ProofNode, u64)>,
+    current_path: BitVec,
+    current_felt: Felt,
+    _hasher: PhantomData<H>,
+}
+
+impl<H: StarkHash> NextRootVisitor<H> for FullTrieVisitor<H> {
     fn visit_proof_nodes(
         &mut self,
         node: &ProofNode,
         path: &BitSlice,
     ) -> Result<VisitResult, PartialTrieError> {
-        // we need to add here only the nodes from partial proof and from original proof
-        // that are not in the partial proof
         let height = self.current_path.len();
-        self.path_nodes.push((node.clone(), height as u64));
 
         if height >= path.len() {
             println!("Height is greater than path length");
@@ -64,6 +61,62 @@ impl<H: StarkHash> PartialTrieVisitor<H> for NextRootVisitor<H> {
                     Direction::Left => *left,
                     Direction::Right => *right,
                 };
+                self.path_nodes.push((node.clone(), height as u64));
+                Ok(VisitResult::Continue)
+            }
+            ProofNode::Edge {
+                child,
+                path: edge_path,
+            } => {
+                if height + edge_path.len() > path.len() {
+                    println!("Height + edge_path.len() is greater than path length");
+                    return Ok(VisitResult::Break);
+                }
+
+                // if path.get(height..(height + edge_path.len())) != Some(&edge_path.0) {
+                //     return Ok(VisitResult::Break);
+                // }
+                self.current_path.extend_from_bitslice(&edge_path.0);
+                self.current_felt = *child;
+                self.path_nodes.push((node.clone(), height as u64));
+                Ok(VisitResult::Continue)
+            }
+        }
+    }
+}
+
+pub(crate) trait NextRootVisitor<H: StarkHash> {
+    fn visit_proof_nodes(
+        &mut self,
+        node: &ProofNode,
+        path: &BitSlice,
+    ) -> Result<VisitResult, PartialTrieError>;
+}
+
+impl<H: StarkHash> NextRootVisitor<H> for PartialTrieVisitor<H> {
+    fn visit_proof_nodes(
+        &mut self,
+        node: &ProofNode,
+        path: &BitSlice,
+    ) -> Result<VisitResult, PartialTrieError> {
+        // we need to add here only the nodes from partial proof and from original proof
+        // that are not in the partial proof
+        let height = self.current_path.len();
+
+        if height >= path.len() {
+            println!("Height is greater than path length");
+            return Ok(VisitResult::Break);
+        }
+
+        match node {
+            ProofNode::Binary { left, right } => {
+                let direction = Direction::from(path[height]);
+                self.current_path.push(direction.into());
+                self.current_felt = match direction {
+                    Direction::Left => *left,
+                    Direction::Right => *right,
+                };
+                self.path_nodes.push((node.clone(), height as u64));
                 Ok(VisitResult::Continue)
             }
             ProofNode::Edge {
@@ -80,27 +133,8 @@ impl<H: StarkHash> PartialTrieVisitor<H> for NextRootVisitor<H> {
                 }
                 self.current_path.extend_from_bitslice(&edge_path.0);
                 self.current_felt = *child;
+                self.path_nodes.push((node.clone(), height as u64));
                 Ok(VisitResult::Continue)
-            }
-        }
-    }
-
-    fn update_path_and_felt(&mut self, path: &BitSlice, height: usize, node: &ProofNode) {
-        match node {
-            ProofNode::Binary { left, right } => {
-                let direction = Direction::from(path[height]);
-                self.current_path.push(direction.into());
-                self.current_felt = match direction {
-                    Direction::Left => *left,
-                    Direction::Right => *right,
-                };
-            }
-            ProofNode::Edge {
-                child,
-                path: edge_path,
-            } => {
-                self.current_path.extend_from_bitslice(&edge_path.0);
-                self.current_felt = *child;
             }
         }
     }
@@ -138,86 +172,99 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
             self.max_height
         );
 
-        //Proof from partial trie
         let proof_keys = vec![key];
         let partial_proof = self.trie.get_multi_proof(&db, proof_keys.iter()).unwrap();
 
-        let mut visitor = NextRootVisitor::<H> {
-            path_nodes: Vec::new(),
-            current_path: BitVec::new(),
-            current_felt: current_root,
-            _hasher: PhantomData,
-        };
-
-        let mut original_visitor = NextRootVisitor::<H> {
+        let mut full_visitor = FullTrieVisitor::<H> {
             path_nodes: Vec::new(),
             current_path: BitVec::new(),
             current_felt: self.original_root,
             _hasher: PhantomData,
         };
 
-        let mut current_felt = current_root;
-        let mut original_current_felt = self.original_root;
+        let mut partial_visitor = PartialTrieVisitor::<H> {
+            path_nodes: Vec::new(),
+            current_path: BitVec::new(),
+            current_felt: current_root,
+            _hasher: PhantomData,
+        };
 
-        loop {
-            if visitor.current_path.len() == key.len() {
+        println!("Original root: {:?}", self.original_root);
+        println!("Current root: {:?}", current_root);
+        println!("Proof nodes: {:?}", proof.0.keys());
+
+        // Always traverse the full tree
+        let mut current_full_felt = self.original_root;
+        while full_visitor.current_path.len() < key.len() {
+            let Some(node) = proof.0.get(&current_full_felt) else {
+                println!(
+                    "Node not found in full trie at felt: {:?}",
+                    current_full_felt
+                );
                 break;
-            }
-            println!("Current path length: {}", visitor.current_path.len());
-            println!("Current felt: {:?}", current_felt);
-            println!("Original current felt: {:?}", original_current_felt);
+            };
 
-            // Najpierw próbujemy znaleźć węzeł w partial trie
-            if let Some(node) = partial_proof.0.get(&current_felt) {
-                match visitor.visit_proof_nodes(node, key)? {
-                    VisitResult::Continue => {
-                        current_felt = visitor.current_felt;
-                        // Pobieramy odpowiadający node z oryginalnego drzewa
-                        println!("AAAAAAAAAAAAAAAAA");
-                        let Some(original_node) = proof.0.get(&original_current_felt) else {
-                            println!("Original node not found!!!!!!!!!!!!1");
-                            break;
-                        };
-                        // Używamy visit_proof_nodes zamiast update_path_and_felt
-                        match original_visitor.visit_proof_nodes(original_node, key)? {
-                            VisitResult::Continue => {
-                                original_current_felt = original_visitor.current_felt;
-                            }
-                            VisitResult::Break => {
-                                break;
-                            }
-                        }
-                    }
-                    VisitResult::Break => {
-                        break;
-                    }
+            match full_visitor.visit_proof_nodes(node, key)? {
+                VisitResult::Continue => {
+                    current_full_felt = full_visitor.current_felt;
                 }
-            } else {
-                // Jeśli nie ma w partial trie, używamy oryginalnego proof
-                let Some(node) = proof.0.get(&original_current_felt) else {
-                    break;
-                };
-                match visitor.visit_proof_nodes(node, key)? {
-                    VisitResult::Continue => {
-                        current_felt = visitor.current_felt;
-                        // Używamy visit_proof_nodes zamiast update_path_and_felt
-                        match original_visitor.visit_proof_nodes(node, key)? {
-                            VisitResult::Continue => {
-                                original_current_felt = original_visitor.current_felt;
-                            }
-                            VisitResult::Break => {
-                                break;
-                            }
-                        }
-                    }
-                    VisitResult::Break => {
-                        break;
-                    }
-                }
+                VisitResult::Break => break,
             }
         }
-        let root = self.build_from_visited_nodes(visitor.path_nodes, key, value)?;
-        
+        println!(
+            "Full visitor path nodes after traversal: {:?}",
+            full_visitor.path_nodes
+        );
+
+        // Now traverse the partial trie
+        let mut current_partial_felt = current_root;
+        while partial_visitor.current_path.len() < key.len() {
+            let partial_result: Result<bool, PartialTrieError> =
+                if let Some(node) = partial_proof.0.get(&current_partial_felt) {
+                    match partial_visitor.visit_proof_nodes(node, key)? {
+                        VisitResult::Continue => {
+                            current_partial_felt = partial_visitor.current_felt;
+                            Ok(true)
+                        }
+                        VisitResult::Break => Ok(false),
+                    }
+                } else {
+                    Ok(false)
+                };
+
+            // If we encounter a missing node
+            if !partial_result? {
+                println!(
+                    "Missing node in partial trie at path: {:?}",
+                    partial_visitor.current_path
+                );
+                // Find the corresponding node in full_visitor
+                if let Some((last_node, last_height)) = full_visitor.path_nodes.last() {
+                    println!("Using last node from full trie at height: {}", last_height);
+                    // Get all nodes down from this point
+                    for (node, height) in full_visitor
+                        .path_nodes
+                        .iter()
+                        .skip_while(|(_, height)| *height < *last_height)
+                    {
+                        partial_visitor.path_nodes.push((node.clone(), *height));
+                    }
+                } else {
+                    println!("No nodes found in both full and partial trie");
+                    break;
+                }
+                break;
+            }
+        }
+
+        println!(
+            "Partial visitor current path: {:?}",
+            partial_visitor.current_path
+        );
+        println!("Full visitor path nodes: {:?}", full_visitor.path_nodes);
+
+        let root = self.build_from_visited_nodes(partial_visitor.path_nodes, key, value)?;
+
         let merkle_tree_root = self.trie.root_hash(db).unwrap();
         self.commit(db).unwrap();
 
@@ -275,14 +322,18 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                     let current_hash = if common.is_empty() {
                         binary_node
                     } else {
-                        let edge_node =  hash_edge_node::<H>(&Path(path.0[..common.len()].to_bitvec()), binary_node);
+                        let edge_node = hash_edge_node::<H>(
+                            &Path(path.0[..common.len()].to_bitvec()),
+                            binary_node,
+                        );
                         self.trie.insert_edge_node(
                             *height,
                             &Path(path.0[..common.len()].to_bitvec()),
                             binary_node,
-                            edge_node
+                            edge_node,
+                            key,
                         )?;
-                       edge_node
+                        edge_node
                     };
 
                     let final_hash = hash_up_merkle_path::<H>(
@@ -292,9 +343,9 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                         true,
                         &mut self.trie,
                     );
-                    // println!("__________________________");
-                    // println!("trie: {:?}", self.trie);
-                    // println!("__________________________");
+                    let key_bytes = bitslice_to_bytes(&key[..*height as usize]);
+                    log::trace!("2 death row add ({:?})", key_bytes);
+                    self.trie.death_row.insert(TrieKey::Trie(key_bytes));
                     Ok(final_hash)
                 }
                 ProofNode::Binary { left, right } => {
@@ -326,7 +377,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
             None => {
                 let edge_node = hash_edge_node::<H>(&Path(key.to_bitvec()), value);
                 self.trie
-                    .insert_edge_node(0, &Path(key.to_bitvec()), value, edge_node)?;
+                    .insert_edge_node(0, &Path(key.to_bitvec()), value, edge_node, key)?;
                 Ok(edge_node)
             }
         }
@@ -477,7 +528,7 @@ fn hash_up_merkle_path<H: StarkHash + Send + Sync>(
                 child: _,
             } => {
                 let edge_node = hash_edge_node::<H>(edge_path, current_hash);
-                trie.insert_edge_node(*height, edge_path, current_hash, edge_node)
+                trie.insert_edge_node(*height, edge_path, current_hash, edge_node, key)
                     .unwrap();
                 current_hash = edge_node;
             }
@@ -645,7 +696,8 @@ mod tests {
             .unwrap();
 
         // Calculate next root using PartialTrie
-        let mut partial_trie = PartialTrie::<Pedersen>::new(identifier1.into(), height, current_root);
+        let mut partial_trie =
+            PartialTrie::<Pedersen>::new(identifier1.into(), height, current_root);
         let next_root = partial_trie
             .next_root(
                 &new_key,
@@ -656,8 +708,6 @@ mod tests {
             )
             .unwrap();
 
-            //change names bonsai tree full i partial
-            // full tree have to be constructed from all keys at the beginning!
         let id2 = id_builder.new_id();
         bonsai_storage2.commit(id2).unwrap();
         let root2 = bonsai_storage2.root_hash(&identifier2).unwrap();
@@ -809,7 +859,8 @@ mod tests {
 
         let partial_trie_identifier = vec![3];
         // Calculate next root using PartialTrie
-        let mut partial_trie = PartialTrie::<Pedersen>::new(partial_trie_identifier.into(), 24, current_root);
+        let mut partial_trie =
+            PartialTrie::<Pedersen>::new(partial_trie_identifier.into(), 24, current_root);
         let next_root = partial_trie
             .next_root(
                 &new_key_bv,
@@ -875,7 +926,8 @@ mod tests {
         bonsai_storage1.commit(id1).unwrap();
         let mut current_root = bonsai_storage1.root_hash(&identifier).unwrap();
 
-        let mut partial_trie = PartialTrie::<Pedersen>::new(identifier.clone().into(), 24, current_root);
+        let mut partial_trie =
+            PartialTrie::<Pedersen>::new(identifier.clone().into(), 24, current_root);
         let mut next_roots = Vec::new();
         let mut i = 0;
         for (key, value) in keys.iter().zip(values.iter()).skip(5) {
@@ -890,21 +942,8 @@ mod tests {
                 .get_multi_proof(&bonsai_storage1.tries.db, proof_keys.iter())
                 .unwrap();
 
-            // println!("--------------------------------");
-            // println!("REAL proof: {:?}", proof);
-            // println!("--------------------------------");
-
-            i+=1;
+            i += 1;
             println!("ITERATION: {:?}", i);
-            //FOR DEBUGGING!
-            let proof = partial_trie
-                .trie
-                .get_multi_proof(&bonsai_storage1.tries.db, proof_keys.iter())
-                .unwrap();
-
-            // println!("--------------------------------");
-            // println!("PARTIAL proof: {:?}", proof);
-            // println!("--------------------------------");
 
             let next_root = partial_trie
                 .next_root(
@@ -997,7 +1036,8 @@ mod tests {
         bonsai_storage1.commit(id1).unwrap();
         let current_root = bonsai_storage1.root_hash(&identifier).unwrap();
 
-        let mut partial_trie = PartialTrie::<Pedersen>::new(identifier.clone().into(), height, current_root);
+        let mut partial_trie =
+            PartialTrie::<Pedersen>::new(identifier.clone().into(), height, current_root);
         let mut current_root = current_root;
         let mut next_roots = Vec::new();
 
