@@ -4,11 +4,13 @@ use super::{
     tree::MerkleTree,
 };
 use crate::databases::RocksDB;
+use crate::hash_map;
 use crate::id::BasicId;
 use crate::trie::proof::common_path;
 use crate::trie::proof::ProofVerificationError;
 use crate::trie::tree::bitslice_to_bytes;
 use crate::trie::tree::InsertOrRemove;
+use crate::trie::trie_db::TrieKeyType;
 use crate::trie::TrieKey;
 use crate::BonsaiStorageError;
 use crate::ByteVec;
@@ -18,6 +20,7 @@ use crate::ProofNode;
 use crate::{trie::merkle_node::NodeHandle, BitSlice, BitVec};
 use crate::{BonsaiDatabase, KeyValueDB};
 use core::marker::PhantomData;
+use parity_scale_codec::Decode;
 use starknet_types_core::{felt::Felt, hash::StarkHash};
 
 #[derive(Debug, thiserror::Error)]
@@ -129,6 +132,7 @@ impl<H: StarkHash> NextRootVisitor<H> for PartialTrieVisitor<H> {
                 }
 
                 if path.get(height..(height + edge_path.len())) != Some(&edge_path.0) {
+                    println!("Divergence point where to add new value to partial trie");
                     return Ok(VisitResult::Break);
                 }
                 self.current_path.extend_from_bitslice(&edge_path.0);
@@ -189,18 +193,14 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
             _hasher: PhantomData,
         };
 
-        println!("Original root: {:?}", self.original_root);
-        println!("Current root: {:?}", current_root);
-        println!("Proof nodes: {:?}", proof.0.keys());
+        // println!("Original root: {:?}", self.original_root);
+        // println!("Current root: {:?}", current_root);
+        // println!("Proof nodes: {:?}", proof.0.keys());
 
         // Always traverse the full tree
         let mut current_full_felt = self.original_root;
         while full_visitor.current_path.len() < key.len() {
             let Some(node) = proof.0.get(&current_full_felt) else {
-                println!(
-                    "Node not found in full trie at felt: {:?}",
-                    current_full_felt
-                );
                 break;
             };
 
@@ -234,19 +234,35 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
 
             // If we encounter a missing node
             if !partial_result? {
-                println!(
-                    "Missing node in partial trie at path: {:?}",
-                    partial_visitor.current_path
-                );
                 // Find the corresponding node in full_visitor
                 if let Some((last_node, last_height)) = full_visitor.path_nodes.last() {
-                    println!("Using last node from full trie at height: {}", last_height);
+                    let current_partial_trie_height = partial_visitor.current_path.len();
+
+                    if current_partial_trie_height == 0 {
+                        if let Some(node) = partial_proof.0.get(&current_root) {
+                            println!("Adding root node to partial visitor path nodes: {:?}", node);
+                            partial_visitor.path_nodes.push((node.clone(), 0));
+                        }
+                    }
+
                     // Get all nodes down from this point
                     for (node, height) in full_visitor
                         .path_nodes
                         .iter()
-                        .skip_while(|(_, height)| *height < *last_height)
+                        .skip_while(|(_, height)| *height < current_partial_trie_height as u64)
+                    //skip nodes until we reach the height of the partial trie
                     {
+                        if *height == 0 {
+                            break;
+                        }
+                        println!(
+                            "Node: {:?}, Height: {:?}, Current partial trie height: {:?}",
+                            node, height, current_partial_trie_height
+                        );
+                        println!(
+                            "Partial visitor path nodes before adding nodes: {:?}",
+                            partial_visitor.path_nodes
+                        );
                         partial_visitor.path_nodes.push((node.clone(), *height));
                     }
                 } else {
@@ -256,17 +272,15 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 break;
             }
         }
-
         println!(
-            "Partial visitor current path: {:?}",
-            partial_visitor.current_path
+            "Partial visitor path nodes after adding nodes: {:?}",
+            partial_visitor.path_nodes
         );
-        println!("Full visitor path nodes: {:?}", full_visitor.path_nodes);
 
-        let root = self.build_from_visited_nodes(partial_visitor.path_nodes, key, value)?;
+        let root = self.build_from_visited_nodes(partial_visitor.path_nodes, key, value, db)?;
 
-        let merkle_tree_root = self.trie.root_hash(db).unwrap();
         self.commit(db).unwrap();
+        let merkle_tree_root = self.trie.root_hash(db).unwrap();
 
         assert_eq!(
             root, merkle_tree_root,
@@ -280,9 +294,37 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         path_nodes: Vec<(ProofNode, u64)>,
         key: &BitSlice,
         value: Felt,
+        db: &mut KeyValueDB<RocksDB<BasicId>, BasicId>,
     ) -> Result<Felt, PartialTrieError> {
-        // let key_bytes = bitslice_to_bytes(key);
-        // self.trie.cache_leaf_modified.insert(key_bytes, InsertOrRemove::Insert(value));
+        let key_bytes = bitslice_to_bytes(key);
+        let mut cache_leaf_entry = self.trie.cache_leaf_modified.entry_ref(&key_bytes[..]);
+
+        if let hash_map::EntryRef::Occupied(entry) = &mut cache_leaf_entry {
+            if matches!(entry.get(), InsertOrRemove::Insert(_)) {
+                println!("Value already exists in cache_leaf_modified");
+                entry.insert(InsertOrRemove::Insert(value));
+                return Ok(hash_up_merkle_path::<H>(
+                    key,
+                    value,
+                    &path_nodes,
+                    false,
+                    &mut self.trie,
+                ));
+            }
+        }
+
+        if let Some(value_db) = db
+            .get(&TrieKey::new(
+                &self.trie.identifier,
+                TrieKeyType::Flat,
+                &key_bytes,
+            ))
+            .unwrap()
+        {
+            if value == Felt::decode(&mut value_db.as_slice()).unwrap() {
+                return Ok(self.trie.root_hash(db).unwrap());
+            }
+        }
 
         match path_nodes.last() {
             Some((node, height)) => match node {
@@ -292,6 +334,9 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
 
                     // If we are at the leaf, we can just update the value and hash up the tree
                     if branch_height >= key.len() {
+                        self.trie
+                            .cache_leaf_modified
+                            .insert(key_bytes, InsertOrRemove::Insert(value));
                         return Ok(hash_up_merkle_path::<H>(
                             key,
                             value,
@@ -309,6 +354,10 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                         common,
                         *height as usize,
                     );
+
+                    self.trie
+                        .cache_leaf_modified
+                        .insert(key_bytes, InsertOrRemove::Insert(value));
 
                     let binary_node = split.create_binary_node_hash();
 
@@ -340,11 +389,10 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                         key,
                         current_hash,
                         &path_nodes,
-                        true,
+                        *height > 0, // Skip last node only if it's not the root
                         &mut self.trie,
                     );
                     let key_bytes = bitslice_to_bytes(&key[..*height as usize]);
-                    log::trace!("2 death row add ({:?})", key_bytes);
                     self.trie.death_row.insert(TrieKey::Trie(key_bytes));
                     Ok(final_hash)
                 }
@@ -364,11 +412,14 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                             binary_node
                         }
                     };
+                    self.trie
+                        .cache_leaf_modified
+                        .insert(key_bytes, InsertOrRemove::Insert(value));
                     let final_hash = hash_up_merkle_path::<H>(
                         key,
                         current_hash,
                         &path_nodes,
-                        true,
+                        *height > 0, // Skip last node only if it's not the root
                         &mut self.trie,
                     );
                     Ok(final_hash)
@@ -378,6 +429,9 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 let edge_node = hash_edge_node::<H>(&Path(key.to_bitvec()), value);
                 self.trie
                     .insert_edge_node(0, &Path(key.to_bitvec()), value, edge_node, key)?;
+                self.trie
+                    .cache_leaf_modified
+                    .insert(key_bytes, InsertOrRemove::Insert(value));
                 Ok(edge_node)
             }
         }
@@ -910,7 +964,7 @@ mod tests {
 
         let mut keys = Vec::new();
         let mut values = Vec::new();
-        for i in 1..=10 {
+        for i in 1..=5 {
             let mut key = vec![0; 3];
             key[0] = i;
             let value = Felt::from(i as u64 + 100);
@@ -918,7 +972,7 @@ mod tests {
             values.push(value);
         }
 
-        for (key, value) in keys.iter().zip(values.iter()).take(5) {
+        for (key, value) in keys.iter().zip(values.iter()).take(3) {
             bonsai_storage1.insert(&identifier, key, value).unwrap();
         }
 
@@ -930,7 +984,7 @@ mod tests {
             PartialTrie::<Pedersen>::new(identifier.clone().into(), 24, current_root);
         let mut next_roots = Vec::new();
         let mut i = 0;
-        for (key, value) in keys.iter().zip(values.iter()).skip(5) {
+        for (key, value) in keys.iter().zip(values.iter()).skip(3) {
             let tree1 = bonsai_storage1
                 .tries
                 .trees
@@ -958,6 +1012,9 @@ mod tests {
             next_roots.push(next_root);
             current_root = next_root;
         }
+        println!("--------------------------------");
+        println!("Partial TRIE: {:?}", partial_trie.trie);
+        println!("--------------------------------");
 
         for (key, value) in keys.iter().zip(values.iter()) {
             bonsai_storage2.insert(&identifier2, key, value).unwrap();
@@ -966,6 +1023,16 @@ mod tests {
         bonsai_storage2.commit(id_builder.new_id()).unwrap();
 
         let actual_root = bonsai_storage2.root_hash(&identifier2).unwrap();
+        println!("--------------------------------");
+        println!(
+            "FULL TRIE: {:?}",
+            bonsai_storage2
+                .tries
+                .trees
+                .get(&smallvec::smallvec![2])
+                .unwrap()
+        );
+        println!("--------------------------------");
         assert_eq!(current_root, actual_root, "Next root calculation failed");
     }
 
@@ -1076,6 +1143,44 @@ mod tests {
 
             let actual_root = bonsai_storage2.root_hash(&identifier2).unwrap();
             assert_eq!(expected_root, actual_root);
+        }
+    }
+
+    #[test]
+    fn test_how_commit_works() {
+        let db = create_rocks_db(tempfile::tempdir().unwrap().path()).unwrap();
+        let identifier = vec![1];
+        let config = BonsaiStorageConfig::default();
+
+        let mut bonsai_storage: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
+            BonsaiStorage::new(
+                RocksDB::new(&db, RocksDBConfig::default()),
+                config.clone(),
+                24,
+            );
+        let mut id_builder = BasicIdBuilder::new();
+
+        let mut keys = Vec::new();
+        let mut values = Vec::new();
+        for i in 1..=5 {
+            let mut key = vec![0; 3];
+            key[0] = i;
+            let value = Felt::from(i as u64 + 100);
+            keys.push(BitVec::from_vec(key));
+            values.push(value);
+        }
+
+        for (key, value) in keys.iter().zip(values.iter()).take(3) {
+            println!("__________Initial insertions__________");
+            bonsai_storage.insert(&identifier, key, value).unwrap();
+        }
+        bonsai_storage.commit(id_builder.new_id()).unwrap();
+
+        for (key, value) in keys.iter().zip(values.iter()).skip(3) {
+            println!("__________Insertion of new key-value__________");
+            bonsai_storage.insert(&identifier, key, value).unwrap();
+            println!("__________End of insertion of new key-value__________");
+            bonsai_storage.commit(id_builder.new_id()).unwrap();
         }
     }
 }

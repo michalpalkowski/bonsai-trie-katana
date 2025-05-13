@@ -167,8 +167,8 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
             self.root_node = Some(RootHandle::Loaded(node_id));
         }
 
-        // let key_bytes = bitslice_to_bytes(&key[..height as usize]);
-        // self.death_row.insert(TrieKey::Trie(key_bytes));
+        let key_bytes = bitslice_to_bytes(&key[..height as usize]);
+        self.death_row.insert(TrieKey::Trie(key_bytes));
 
         Ok(())
     }
@@ -237,6 +237,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         match handle {
             NodeHandle::Hash(_) => {
                 // TODO(perf): useless allocs everywhere here...
+
                 let path: ByteVec = path.clone().into();
                 log::trace!("Visiting db node {:?}", path);
                 let key = TrieKey::new(&self.identifier, TrieKeyType::Trie, &path);
