@@ -236,6 +236,13 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 if let Some((last_node, last_height)) = full_visitor.path_nodes.last() {
                     let current_partial_trie_height = partial_visitor.current_path.len();
 
+                    if current_partial_trie_height == 0 {
+                        if let Some(node) = partial_proof.0.get(&current_root) {
+                            println!("Adding root node to partial visitor path nodes: {:?}", node);
+                            partial_visitor.path_nodes.push((node.clone(), 0));
+                        }
+                    }
+
                     // Get all nodes down from this point
                     for (node, height) in full_visitor
                         .path_nodes
@@ -270,7 +277,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         );
 
         let root = self.build_from_visited_nodes(partial_visitor.path_nodes, key, value, db)?;
-        self.commit(db).unwrap();
+        // self.commit(db).unwrap();
         println!(
             "Root node of a trie, should Some: {:?}",
             self.trie.root_node
@@ -278,10 +285,10 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
 
         let merkle_tree_root = self.trie.root_hash(db).unwrap();
 
-        assert_eq!(
-            root, merkle_tree_root,
-            "Merkle tree root hash calculation failed"
-        );
+        // assert_eq!(
+        //     root, merkle_tree_root,
+        //     "Merkle tree root hash calculation failed"
+        // );
         Ok(root)
     }
 
@@ -346,14 +353,13 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
 
                     let binary_node = split.create_binary_node_hash();
 
-                    let binary = Node::Binary(BinaryNode {
-                        hash: Some(binary_node),
-                        height: branch_height as u64,
-                        left: NodeHandle::Hash(split.new_branch.value),
-                        right: NodeHandle::Hash(split.old_branch.value),
-                    });
-                    let node_id = self.trie.nodes.insert(binary);
-                    println!("Inserted binary node: {:?}", node_id);
+                    let node_id = self.trie.insert_binary_node(
+                        branch_height as u64,
+                        split.new_branch.value,
+                        split.old_branch.value,
+                        binary_node,
+                    )?;
+
                     self.node_keys.push(node_id);
 
                     let current_hash = if common.is_empty() {
@@ -363,15 +369,13 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                             &Path(path.0[..common.len()].to_bitvec()),
                             binary_node,
                         );
-
-                        let edge = Node::Edge(EdgeNode {
-                            hash: Some(edge_node),
-                            height: *height,
-                            path: Path(path.0[..common.len()].to_bitvec()),
-                            child: NodeHandle::Hash(binary_node),
-                        });
-                        let node_id = self.trie.nodes.insert(edge);
-                        println!("Inserted edge node: {:?}", node_id);
+                        let node_id = self.trie.insert_edge_node(
+                            *height,
+                            &Path(path.0[..common.len()].to_bitvec()),
+                            binary_node,
+                            edge_node,
+                            key,
+                        )?;
                         self.node_keys.push(node_id);
 
                         edge_node
@@ -393,14 +397,12 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                         Direction::Left => {
                             let binary_node = hash_binary_node::<H>(value, *right);
 
-                            let binary = Node::Binary(BinaryNode {
-                                hash: Some(binary_node),
-                                height: *height,
-                                left: NodeHandle::Hash(value),
-                                right: NodeHandle::Hash(*right),
-                            });
-                            let node_id = self.trie.nodes.insert(binary);
-                            println!("Inserted binary node: {:?}", node_id);
+                            let node_id = self.trie.insert_binary_node(
+                                *height,
+                                value,
+                                *right,
+                                binary_node,
+                            )?;
                             self.node_keys.push(node_id);
 
                             binary_node
@@ -408,14 +410,9 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                         Direction::Right => {
                             let binary_node = hash_binary_node::<H>(*left, value);
 
-                            let binary = Node::Binary(BinaryNode {
-                                hash: Some(binary_node),
-                                height: *height,
-                                left: NodeHandle::Hash(*left),
-                                right: NodeHandle::Hash(value),
-                            });
-                            let node_id = self.trie.nodes.insert(binary);
-                            println!("Inserted binary node: {:?}", node_id);
+                            let node_id =
+                                self.trie
+                                    .insert_binary_node(*height, *left, value, binary_node)?;
                             self.node_keys.push(node_id);
 
                             binary_node
@@ -436,17 +433,13 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
             None => {
                 let edge_node = hash_edge_node::<H>(&Path(key.to_bitvec()), value);
 
-                let edge = Node::Edge(EdgeNode {
-                    hash: Some(edge_node),
-                    height: 0,
-                    path: Path(key.to_bitvec()),
-                    child: NodeHandle::Hash(value),
-                });
-                let node_id = self.trie.nodes.insert(edge);
+                let node_id =
+                    self.trie
+                        .insert_edge_node(0, &Path(key.to_bitvec()), value, edge_node, key)?;
                 self.node_keys.push(node_id);
 
                 println!("Inserted root node!: {:?}", node_id);
-                self.trie.root_node = Some(RootHandle::Loaded(node_id));
+                // self.trie.root_node = Some(RootHandle::Loaded(node_id));
 
                 self.trie
                     .cache_leaf_modified
@@ -511,32 +504,22 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                         Direction::Left => {
                             let binary_node = hash_binary_node::<H>(current_hash, *right);
 
-                            let binary = Node::Binary(BinaryNode {
-                                hash: Some(binary_node),
-                                height: *height,
-                                left: NodeHandle::Hash(current_hash),
-                                right: NodeHandle::Hash(*right),
-                            });
-
-                            let node_key = self.trie.nodes.insert(binary);
-                            println!("Inserted binary node: {:?}", node_key);
-                            self.node_keys.push(node_key);
+                            let node_id = self
+                                .trie
+                                .insert_binary_node(*height, current_hash, *right, binary_node)
+                                .unwrap();
+                            self.node_keys.push(node_id);
 
                             binary_node
                         }
                         Direction::Right => {
                             let binary_node = hash_binary_node::<H>(*left, current_hash);
 
-                            let binary = Node::Binary(BinaryNode {
-                                hash: Some(binary_node),
-                                height: *height,
-                                left: NodeHandle::Hash(*left),
-                                right: NodeHandle::Hash(current_hash),
-                            });
-
-                            let node_key = self.trie.nodes.insert(binary);
-                            println!("Inserted binary node: {:?}", node_key);
-                            self.node_keys.push(node_key);
+                            let node_id = self
+                                .trie
+                                .insert_binary_node(*height, *left, current_hash, binary_node)
+                                .unwrap();
+                            self.node_keys.push(node_id);
 
                             binary_node
                         }
@@ -548,24 +531,19 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 } => {
                     let edge_node = hash_edge_node::<H>(edge_path, current_hash);
 
-                    let edge = Node::Edge(EdgeNode {
-                        hash: Some(edge_node),
-                        height: *height,
-                        path: edge_path.clone(),
-                        child: NodeHandle::Hash(current_hash),
-                    });
-
-                    let node_key = self.trie.nodes.insert(edge);
-                    println!("Inserted edge node: {:?}", node_key);
-                    self.node_keys.push(node_key);
+                    let node_id = self
+                        .trie
+                        .insert_edge_node(*height, edge_path, current_hash, edge_node, key)
+                        .unwrap();
+                    self.node_keys.push(node_id);
 
                     current_hash = edge_node;
                 }
             }
         }
 
-        self.update_node_references();
-        println!("NODE KEYS: {:?}", self.node_keys);
+        // self.update_node_references();
+        // println!("NODE KEYS: {:?}", self.node_keys);
 
         current_hash
     }

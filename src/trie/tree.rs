@@ -129,7 +129,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         left: Felt,
         right: Felt,
         hash: Felt,
-    ) -> Result<(), PartialTrieError> {
+    ) -> Result<NodeKey, PartialTrieError> {
         let binary_node = Node::Binary(BinaryNode {
             hash: Some(hash),
             height,
@@ -143,7 +143,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
             self.root_node = Some(RootHandle::Loaded(node_id));
         }
 
-        Ok(())
+        Ok(node_id)
     }
 
     pub fn insert_edge_node(
@@ -153,7 +153,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         child: Felt,
         hash: Felt,
         key: &BitSlice,
-    ) -> Result<(), PartialTrieError> {
+    ) -> Result<NodeKey, PartialTrieError> {
         let edge_node = Node::Edge(EdgeNode {
             hash: Some(hash),
             height,
@@ -170,7 +170,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         let key_bytes = bitslice_to_bytes(&key[..height as usize]);
         self.death_row.insert(TrieKey::Trie(key_bytes));
 
-        Ok(())
+        Ok(node_id)
     }
 
     /// Loads the root node or returns None if the tree is empty.
