@@ -350,6 +350,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
     > {
         let mut updates = HashMap::new();
         for node_key in mem::take(&mut self.death_row) {
+            println!("Removing node: {:?}", node_key);
             updates.insert(node_key, InsertOrRemove::Remove);
         }
 
@@ -365,6 +366,15 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                 Path::default(),
                 &mut hashes.into_iter(),
             )?;
+            println!(
+                "After commit_subtree, nodes len in memory: {:?}",
+                self.nodes.len()
+            );
+            println!(
+                "After commit_subtree, nodes in memory: {:?}",
+                self.nodes.iter().collect::<Vec<_>>()
+            );
+            println!("After commit_subtree, root node: {:?}", self.root_node);
         }
 
         self.root_node = None; // unloaded
@@ -575,8 +585,8 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                     }
                 };
 
+                println!("Committing node: {:?}", node_id);
                 let hash = hashes.next().expect("mismatched hash state");
-
                 binary.hash = Some(hash);
                 binary.left = NodeHandle::Hash(left_hash);
                 binary.right = NodeHandle::Hash(right_hash);
@@ -596,6 +606,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                         self.commit_subtree::<DB>(updates, node_id, child_path, hashes)?
                     }
                 };
+                println!("Committing node: {:?}", node_id);
                 let hash = hashes.next().expect("mismatched hash state");
                 edge.hash = Some(hash);
                 edge.child = NodeHandle::Hash(child_hash);

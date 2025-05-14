@@ -1,7 +1,7 @@
 use super::{
-    merkle_node::{hash_binary_node, hash_edge_node, Direction},
+    merkle_node::{hash_binary_node, hash_edge_node, BinaryNode, Direction, EdgeNode, Node},
     path::Path,
-    tree::MerkleTree,
+    tree::{MerkleTree, NodeKey, RootHandle},
 };
 use crate::databases::RocksDB;
 use crate::hash_map;
@@ -22,6 +22,7 @@ use crate::{BonsaiDatabase, KeyValueDB};
 use core::marker::PhantomData;
 use parity_scale_codec::Decode;
 use starknet_types_core::{felt::Felt, hash::StarkHash};
+use std::collections::HashMap;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PartialTrieError {
@@ -75,7 +76,6 @@ impl<H: StarkHash> NextRootVisitor<H> for FullTrieVisitor<H> {
                     println!("Height + edge_path.len() is greater than path length");
                     return Ok(VisitResult::Break);
                 }
-
                 // if path.get(height..(height + edge_path.len())) != Some(&edge_path.0) {
                 //     return Ok(VisitResult::Break);
                 // }
@@ -148,6 +148,7 @@ struct PartialTrie<H: StarkHash> {
     trie: MerkleTree<H>,
     max_height: u8,
     original_root: Felt,
+    node_keys: Vec<NodeKey>,
     _hasher: PhantomData<H>,
 }
 
@@ -157,6 +158,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
             trie: MerkleTree::new(identifier, max_height),
             max_height,
             original_root,
+            node_keys: Vec::new(),
             _hasher: PhantomData,
         }
     }
@@ -192,10 +194,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
             current_felt: current_root,
             _hasher: PhantomData,
         };
-
-        // println!("Original root: {:?}", self.original_root);
-        // println!("Current root: {:?}", current_root);
-        // println!("Proof nodes: {:?}", proof.0.keys());
 
         // Always traverse the full tree
         let mut current_full_felt = self.original_root;
@@ -238,13 +236,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 if let Some((last_node, last_height)) = full_visitor.path_nodes.last() {
                     let current_partial_trie_height = partial_visitor.current_path.len();
 
-                    if current_partial_trie_height == 0 {
-                        if let Some(node) = partial_proof.0.get(&current_root) {
-                            println!("Adding root node to partial visitor path nodes: {:?}", node);
-                            partial_visitor.path_nodes.push((node.clone(), 0));
-                        }
-                    }
-
                     // Get all nodes down from this point
                     for (node, height) in full_visitor
                         .path_nodes
@@ -253,6 +244,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                     //skip nodes until we reach the height of the partial trie
                     {
                         if *height == 0 {
+                            //leave root of partial trie as it is
                             break;
                         }
                         println!(
@@ -278,8 +270,12 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         );
 
         let root = self.build_from_visited_nodes(partial_visitor.path_nodes, key, value, db)?;
-
         self.commit(db).unwrap();
+        println!(
+            "Root node of a trie, should Some: {:?}",
+            self.trie.root_node
+        );
+
         let merkle_tree_root = self.trie.root_hash(db).unwrap();
 
         assert_eq!(
@@ -303,13 +299,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
             if matches!(entry.get(), InsertOrRemove::Insert(_)) {
                 println!("Value already exists in cache_leaf_modified");
                 entry.insert(InsertOrRemove::Insert(value));
-                return Ok(hash_up_merkle_path::<H>(
-                    key,
-                    value,
-                    &path_nodes,
-                    false,
-                    &mut self.trie,
-                ));
+                return Ok(self.hash_up_merkle_path(key, value, &path_nodes, false));
             }
         }
 
@@ -334,16 +324,11 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
 
                     // If we are at the leaf, we can just update the value and hash up the tree
                     if branch_height >= key.len() {
+                        println!("Branch height is greater than key length");
                         self.trie
                             .cache_leaf_modified
                             .insert(key_bytes, InsertOrRemove::Insert(value));
-                        return Ok(hash_up_merkle_path::<H>(
-                            key,
-                            value,
-                            &path_nodes,
-                            false,
-                            &mut self.trie,
-                        ));
+                        return Ok(self.hash_up_merkle_path(key, value, &path_nodes, false));
                     }
 
                     let split = PathSplit::<H>::from_edge_and_key(
@@ -361,12 +346,15 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
 
                     let binary_node = split.create_binary_node_hash();
 
-                    self.trie.insert_binary_node(
-                        branch_height as u64,
-                        split.new_branch.value,
-                        split.old_branch.value,
-                        binary_node,
-                    )?;
+                    let binary = Node::Binary(BinaryNode {
+                        hash: Some(binary_node),
+                        height: branch_height as u64,
+                        left: NodeHandle::Hash(split.new_branch.value),
+                        right: NodeHandle::Hash(split.old_branch.value),
+                    });
+                    let node_id = self.trie.nodes.insert(binary);
+                    println!("Inserted binary node: {:?}", node_id);
+                    self.node_keys.push(node_id);
 
                     let current_hash = if common.is_empty() {
                         binary_node
@@ -375,22 +363,25 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                             &Path(path.0[..common.len()].to_bitvec()),
                             binary_node,
                         );
-                        self.trie.insert_edge_node(
-                            *height,
-                            &Path(path.0[..common.len()].to_bitvec()),
-                            binary_node,
-                            edge_node,
-                            key,
-                        )?;
+
+                        let edge = Node::Edge(EdgeNode {
+                            hash: Some(edge_node),
+                            height: *height,
+                            path: Path(path.0[..common.len()].to_bitvec()),
+                            child: NodeHandle::Hash(binary_node),
+                        });
+                        let node_id = self.trie.nodes.insert(edge);
+                        println!("Inserted edge node: {:?}", node_id);
+                        self.node_keys.push(node_id);
+
                         edge_node
                     };
 
-                    let final_hash = hash_up_merkle_path::<H>(
+                    let final_hash = self.hash_up_merkle_path(
                         key,
                         current_hash,
                         &path_nodes,
-                        *height > 0, // Skip last node only if it's not the root
-                        &mut self.trie,
+                        true, // Skip last node only if it's not the root
                     );
                     let key_bytes = bitslice_to_bytes(&key[..*height as usize]);
                     self.trie.death_row.insert(TrieKey::Trie(key_bytes));
@@ -401,34 +392,62 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                     let current_hash = match direction {
                         Direction::Left => {
                             let binary_node = hash_binary_node::<H>(value, *right);
-                            self.trie
-                                .insert_binary_node(*height, value, *right, binary_node)?;
+
+                            let binary = Node::Binary(BinaryNode {
+                                hash: Some(binary_node),
+                                height: *height,
+                                left: NodeHandle::Hash(value),
+                                right: NodeHandle::Hash(*right),
+                            });
+                            let node_id = self.trie.nodes.insert(binary);
+                            println!("Inserted binary node: {:?}", node_id);
+                            self.node_keys.push(node_id);
+
                             binary_node
                         }
                         Direction::Right => {
                             let binary_node = hash_binary_node::<H>(*left, value);
-                            self.trie
-                                .insert_binary_node(*height, *left, value, binary_node)?;
+
+                            let binary = Node::Binary(BinaryNode {
+                                hash: Some(binary_node),
+                                height: *height,
+                                left: NodeHandle::Hash(*left),
+                                right: NodeHandle::Hash(value),
+                            });
+                            let node_id = self.trie.nodes.insert(binary);
+                            println!("Inserted binary node: {:?}", node_id);
+                            self.node_keys.push(node_id);
+
                             binary_node
                         }
                     };
                     self.trie
                         .cache_leaf_modified
                         .insert(key_bytes, InsertOrRemove::Insert(value));
-                    let final_hash = hash_up_merkle_path::<H>(
+                    let final_hash = self.hash_up_merkle_path(
                         key,
                         current_hash,
                         &path_nodes,
-                        *height > 0, // Skip last node only if it's not the root
-                        &mut self.trie,
+                        true, // Skip last node only if it's not the root
                     );
                     Ok(final_hash)
                 }
             },
             None => {
                 let edge_node = hash_edge_node::<H>(&Path(key.to_bitvec()), value);
-                self.trie
-                    .insert_edge_node(0, &Path(key.to_bitvec()), value, edge_node, key)?;
+
+                let edge = Node::Edge(EdgeNode {
+                    hash: Some(edge_node),
+                    height: 0,
+                    path: Path(key.to_bitvec()),
+                    child: NodeHandle::Hash(value),
+                });
+                let node_id = self.trie.nodes.insert(edge);
+                self.node_keys.push(node_id);
+
+                println!("Inserted root node!: {:?}", node_id);
+                self.trie.root_node = Some(RootHandle::Loaded(node_id));
+
                 self.trie
                     .cache_leaf_modified
                     .insert(key_bytes, InsertOrRemove::Insert(value));
@@ -445,7 +464,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
 
         let mut batch = db.create_batch();
         for (key, value) in db_changes {
-            println!(" VALUES TO CHANGE: KEY: {:?}, VALUE: {:?}", key, value);
             match value {
                 InsertOrRemove::Insert(value) => {
                     db.insert(&key, &value, Some(&mut batch))?;
@@ -472,6 +490,121 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
             NodeHandle::InMemory(_) => {
                 // TODO: lazily load node from proof
                 unimplemented!()
+            }
+        }
+    }
+
+    fn hash_up_merkle_path(
+        &mut self,
+        key: &BitSlice,
+        mut current_hash: Felt,
+        path_nodes: &[(ProofNode, u64)],
+        skip_last: bool, // whether to skip the last element (e.g. if it has already been processed)
+    ) -> Felt {
+        let iter = path_nodes.iter().rev().skip(if skip_last { 1 } else { 0 });
+
+        for (node, height) in iter {
+            match node {
+                ProofNode::Binary { left, right } => {
+                    let direction = Direction::from(key[*height as usize]);
+                    current_hash = match direction {
+                        Direction::Left => {
+                            let binary_node = hash_binary_node::<H>(current_hash, *right);
+
+                            let binary = Node::Binary(BinaryNode {
+                                hash: Some(binary_node),
+                                height: *height,
+                                left: NodeHandle::Hash(current_hash),
+                                right: NodeHandle::Hash(*right),
+                            });
+
+                            let node_key = self.trie.nodes.insert(binary);
+                            println!("Inserted binary node: {:?}", node_key);
+                            self.node_keys.push(node_key);
+
+                            binary_node
+                        }
+                        Direction::Right => {
+                            let binary_node = hash_binary_node::<H>(*left, current_hash);
+
+                            let binary = Node::Binary(BinaryNode {
+                                hash: Some(binary_node),
+                                height: *height,
+                                left: NodeHandle::Hash(*left),
+                                right: NodeHandle::Hash(current_hash),
+                            });
+
+                            let node_key = self.trie.nodes.insert(binary);
+                            println!("Inserted binary node: {:?}", node_key);
+                            self.node_keys.push(node_key);
+
+                            binary_node
+                        }
+                    };
+                }
+                ProofNode::Edge {
+                    path: edge_path,
+                    child: _,
+                } => {
+                    let edge_node = hash_edge_node::<H>(edge_path, current_hash);
+
+                    let edge = Node::Edge(EdgeNode {
+                        hash: Some(edge_node),
+                        height: *height,
+                        path: edge_path.clone(),
+                        child: NodeHandle::Hash(current_hash),
+                    });
+
+                    let node_key = self.trie.nodes.insert(edge);
+                    println!("Inserted edge node: {:?}", node_key);
+                    self.node_keys.push(node_key);
+
+                    current_hash = edge_node;
+                }
+            }
+        }
+
+        self.update_node_references();
+        println!("NODE KEYS: {:?}", self.node_keys);
+
+        current_hash
+    }
+
+    fn update_node_references(&mut self) {
+        let mut hash_to_node: HashMap<Felt, NodeKey> = HashMap::new();
+
+        for node_key in &self.node_keys {
+            if let Some(node) = self.trie.nodes.get(*node_key) {
+                if let Some(hash) = node.get_hash() {
+                    hash_to_node.insert(hash, *node_key);
+                }
+            }
+        }
+
+        for node_key in &self.node_keys {
+            if let Some(node) = self.trie.nodes.get_mut(*node_key) {
+                match node {
+                    Node::Binary(binary) => {
+                        if let NodeHandle::Hash(left_hash) = binary.left {
+                            if let Some(&left_node_key) = hash_to_node.get(&left_hash) {
+                                binary.left = NodeHandle::InMemory(left_node_key);
+                            }
+                        }
+
+                        if let NodeHandle::Hash(right_hash) = binary.right {
+                            if let Some(&right_node_key) = hash_to_node.get(&right_hash) {
+                                binary.right = NodeHandle::InMemory(right_node_key);
+                            }
+                        }
+                    }
+                    Node::Edge(edge) => {
+                        if let NodeHandle::Hash(child_hash) = edge.child {
+                            if let Some(&child_node_key) = hash_to_node.get(&child_hash) {
+                                edge.child = NodeHandle::InMemory(child_node_key);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -547,48 +680,6 @@ impl<H: StarkHash> PathSplit<H> {
             Direction::Right => hash_binary_node::<H>(old_hash, new_hash),
         }
     }
-}
-
-fn hash_up_merkle_path<H: StarkHash + Send + Sync>(
-    key: &BitSlice,
-    mut current_hash: Felt,
-    path_nodes: &[(ProofNode, u64)],
-    skip_last: bool, // whether to skip the last element (e.g. if it has already been processed)
-    trie: &mut MerkleTree<H>,
-) -> Felt {
-    let iter = path_nodes.iter().rev().skip(if skip_last { 1 } else { 0 });
-
-    for (node, height) in iter {
-        match node {
-            ProofNode::Binary { left, right } => {
-                let direction = Direction::from(key[*height as usize]);
-                current_hash = match direction {
-                    Direction::Left => {
-                        let binary_node = hash_binary_node::<H>(current_hash, *right);
-                        trie.insert_binary_node(*height, current_hash, *right, binary_node)
-                            .unwrap();
-                        binary_node
-                    }
-                    Direction::Right => {
-                        let binary_node = hash_binary_node::<H>(*left, current_hash);
-                        trie.insert_binary_node(*height, *left, current_hash, binary_node)
-                            .unwrap();
-                        binary_node
-                    }
-                };
-            }
-            ProofNode::Edge {
-                path: edge_path,
-                child: _,
-            } => {
-                let edge_node = hash_edge_node::<H>(edge_path, current_hash);
-                trie.insert_edge_node(*height, edge_path, current_hash, edge_node, key)
-                    .unwrap();
-                current_hash = edge_node;
-            }
-        }
-    }
-    current_hash
 }
 
 #[cfg(test)]
@@ -1023,16 +1114,6 @@ mod tests {
         bonsai_storage2.commit(id_builder.new_id()).unwrap();
 
         let actual_root = bonsai_storage2.root_hash(&identifier2).unwrap();
-        println!("--------------------------------");
-        println!(
-            "FULL TRIE: {:?}",
-            bonsai_storage2
-                .tries
-                .trees
-                .get(&smallvec::smallvec![2])
-                .unwrap()
-        );
-        println!("--------------------------------");
         assert_eq!(current_root, actual_root, "Next root calculation failed");
     }
 
