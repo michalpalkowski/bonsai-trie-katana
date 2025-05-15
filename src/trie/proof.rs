@@ -16,9 +16,9 @@ use crate::{
     id::Id,
     key_value_db::KeyValueDB,
     trie::{
-        iterator::NodeVisitor,
+        iterator::{NodeVisitor, PartialNodeVisitor},
         merkle_node::{Node, NodeHandle},
-        tree::NodeKey,
+        tree::{NodeKey, RootHandle},
     },
     BitSlice, BitVec, BonsaiDatabase, BonsaiStorageError, HashMap, HashSet,
 };
@@ -219,6 +219,78 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                 });
             }
             iter.traverse_to(&mut visitor, key)?;
+        }
+
+        Ok(visitor.0)
+    }
+
+    pub fn get_partial_multi_proof<DB: BonsaiDatabase, ID: Id>(
+        &mut self,
+        db: &KeyValueDB<DB, ID>,
+        keys: impl IntoIterator<Item = impl AsRef<BitSlice>>,
+        proof: &MultiProof,
+        current_felt: Felt,
+    ) -> Result<MultiProof, BonsaiStorageError<DB::DatabaseError>> {
+        let max_height = self.max_height;
+
+        struct ProofVisitor<H>(MultiProof, PhantomData<H>);
+        impl<H: StarkHash + Send + Sync> PartialNodeVisitor<H> for ProofVisitor<H> {
+            fn visit_partial_node<DB: BonsaiDatabase>(
+                &mut self,
+                tree: &mut MerkleTree<H>,
+                node_hash: Felt,
+                _prev_height: usize,
+            ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
+                println!("WE ARE IN VISIT_PARTIAL_NODE");
+                if let Some(RootHandle::Loaded(root_id)) = tree.root_node {
+                    let root_node = tree.get_node_mut::<DB>(root_id)?;
+
+                    // Tworzymy ProofNode z root node'a używając istniejących hashy
+                    let proof_node = match root_node {
+                        Node::Binary(binary_node) => {
+                            println!("VISITING BINARY NODE: {:?}", binary_node);
+                            match (binary_node.left, binary_node.right) {
+                                (NodeHandle::Hash(left), NodeHandle::Hash(right)) => {
+                                    ProofNode::Binary { left, right }
+                                }
+                                _ => {
+                                    println!("IGNORING!@: {:?}", binary_node);
+                                    return Ok(()); // ignorujemy nody które nie mają hashy
+                                }
+                            }
+                        }
+                        Node::Edge(edge_node) => {
+                            println!("VISITING EDGE NODE: {:?}", edge_node);
+                            if let NodeHandle::Hash(child) = edge_node.child {
+                                ProofNode::Edge {
+                                    child,
+                                    path: edge_node.path.clone(),
+                                }
+                            } else {
+                                println!("IGNORING!@: {:?}", edge_node);
+                                return Ok(()); // ignorujemy nody które nie mają hashy
+                            }
+                        }
+                    };
+
+                    // Dodajemy node do proof'a
+                    self.0 .0.insert(node_hash, proof_node);
+                }
+                Ok(())
+            }
+        }
+        let mut visitor = ProofVisitor::<H>(MultiProof(Default::default()), PhantomData);
+
+        let mut iter = self.iter(db);
+        for key in keys {
+            let key = key.as_ref();
+            if key.len() != max_height as usize {
+                return Err(BonsaiStorageError::KeyLength {
+                    expected: self.max_height as _,
+                    got: key.len(),
+                });
+            }
+            iter.traverse_to_partial(&mut visitor, key, proof, current_felt)?;
         }
 
         Ok(visitor.0)
