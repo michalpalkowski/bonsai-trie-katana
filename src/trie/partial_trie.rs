@@ -23,6 +23,9 @@ use core::marker::PhantomData;
 use parity_scale_codec::Decode;
 use starknet_types_core::{felt::Felt, hash::StarkHash};
 use std::collections::HashMap;
+use std::mem;
+use crate::EncodeExt;
+use std::collections::HashSet;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PartialTrieError {
@@ -148,7 +151,7 @@ struct PartialTrie<H: StarkHash> {
     trie: MerkleTree<H>,
     max_height: u8,
     original_root: Felt,
-    node_keys: Vec<NodeKey>,
+    node_keys: HashSet<NodeKey>,
     _hasher: PhantomData<H>,
 }
 
@@ -158,7 +161,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
             trie: MerkleTree::new(identifier, max_height),
             max_height,
             original_root,
-            node_keys: Vec::new(),
+            node_keys: HashSet::new(),
             _hasher: PhantomData,
         }
     }
@@ -171,6 +174,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         proof: MultiProof,
         db: &mut KeyValueDB<RocksDB<BasicId>, BasicId>,
     ) -> Result<Felt, PartialTrieError> {
+        println!("Nodes in trie before get-multi-proof nodes: {:?}", self.trie.nodes);
         assert!(
             key.len() == self.max_height as usize,
             "Key length mismatch: key length is {} but max height is {}",
@@ -179,8 +183,16 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         );
 
         let proof_keys = vec![key];
-        let partial_proof = self.trie.get_multi_proof(&db, proof_keys.iter()).unwrap();
+        println!("TRIE BEFORE GETTING PROOF: {:?}", self.trie);
 
+        let partial_proof = self.trie.get_multi_proof(&db, proof_keys.iter()).unwrap();
+        println!("Nodes in trie after get-multi-proof nodes: {:?}", self.trie.nodes);
+        self.trie.nodes.clear();
+
+        if let Some(RootHandle::Loaded(node_id)) = self.trie.root_node {
+            self.node_keys.insert(node_id);
+        }
+        
         let mut full_visitor = FullTrieVisitor::<H> {
             path_nodes: Vec::new(),
             current_path: BitVec::new(),
@@ -271,24 +283,21 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 break;
             }
         }
+        println!("Nodes in trie before adding nodes: {:?}", self.trie.nodes);
         println!(
             "Partial visitor path nodes after adding nodes: {:?}",
             partial_visitor.path_nodes
         );
 
         let root = self.build_from_visited_nodes(partial_visitor.path_nodes, key, value, db)?;
-        // self.commit(db).unwrap();
-        println!(
-            "Root node of a trie, should Some: {:?}",
-            self.trie.root_node
-        );
+        self.commit(db).unwrap();
 
         let merkle_tree_root = self.trie.root_hash(db).unwrap();
 
-        // assert_eq!(
-        //     root, merkle_tree_root,
-        //     "Merkle tree root hash calculation failed"
-        // );
+        assert_eq!(
+            root, merkle_tree_root,
+            "Merkle tree root hash calculation failed"
+        );
         Ok(root)
     }
 
@@ -299,6 +308,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         value: Felt,
         db: &mut KeyValueDB<RocksDB<BasicId>, BasicId>,
     ) -> Result<Felt, PartialTrieError> {
+        println!("Building from visited nodes: {:?}", path_nodes);
         let key_bytes = bitslice_to_bytes(key);
         let mut cache_leaf_entry = self.trie.cache_leaf_modified.entry_ref(&key_bytes[..]);
 
@@ -326,6 +336,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         match path_nodes.last() {
             Some((node, height)) => match node {
                 ProofNode::Edge { child, path } => {
+                    println!("Edge node: {:?}, height: {:?}", node, height);
                     let common = common_path(path, *height as usize, key);
                     let branch_height = *height as usize + common.len();
 
@@ -353,81 +364,87 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
 
                     let binary_node = split.create_binary_node_hash();
 
-                    let node_id = self.trie.insert_binary_node(
-                        branch_height as u64,
-                        split.new_branch.value,
-                        split.old_branch.value,
-                        binary_node,
-                    )?;
-
-                    self.node_keys.push(node_id);
-
                     let current_hash = if common.is_empty() {
+                        let node_id = self.trie.insert_binary_node(
+                            branch_height as u64,
+                            split.new_branch.value,
+                            split.old_branch.value,
+                            binary_node,
+                        )?;
+                        self.node_keys.insert(node_id);
+
                         binary_node
                     } else {
-                        let edge_node = hash_edge_node::<H>(
+                        let edge_node_hash = hash_edge_node::<H>(
                             &Path(path.0[..common.len()].to_bitvec()),
                             binary_node,
                         );
-                        let node_id = self.trie.insert_edge_node(
+                        //insert edge node
+                        let edge_node_id = self.trie.insert_edge_node(
                             *height,
                             &Path(path.0[..common.len()].to_bitvec()),
                             binary_node,
-                            edge_node,
+                            edge_node_hash,
                             key,
                         )?;
-                        self.node_keys.push(node_id);
+                        self.node_keys.insert(edge_node_id);
 
-                        edge_node
+                        //insert binary node
+                        let node_id = self.trie.insert_binary_node(
+                            branch_height as u64,
+                            split.new_branch.value,
+                            split.old_branch.value,
+                            binary_node,
+                        )?;
+                        self.node_keys.insert(node_id);
+            
+                        edge_node_hash
                     };
 
                     let final_hash = self.hash_up_merkle_path(
                         key,
                         current_hash,
                         &path_nodes,
-                        true, // Skip last node only if it's not the root
+                        true, 
                     );
+
                     let key_bytes = bitslice_to_bytes(&key[..*height as usize]);
+                    log::trace!("2 death row add ({:?})", key_bytes);
                     self.trie.death_row.insert(TrieKey::Trie(key_bytes));
+                    println!("NODES IN DEATH ROW AFTER INSERTING edge NODE: {:?}", self.trie.death_row);
                     Ok(final_hash)
                 }
                 ProofNode::Binary { left, right } => {
+                    println!("Binary node: {:?}, height: {:?}", node, height);
+                    let child_height = *height + 1;
+                    
+                    //Consider inserting to self.trie.nodes here !
                     let direction = Direction::from(key[*height as usize]);
-                    let current_hash = match direction {
-                        Direction::Left => {
-                            let binary_node = hash_binary_node::<H>(value, *right);
-
-                            let node_id = self.trie.insert_binary_node(
-                                *height,
-                                value,
-                                *right,
-                                binary_node,
-                            )?;
-                            self.node_keys.push(node_id);
-
-                            binary_node
-                        }
-                        Direction::Right => {
-                            let binary_node = hash_binary_node::<H>(*left, value);
-
-                            let node_id =
-                                self.trie
-                                    .insert_binary_node(*height, *left, value, binary_node)?;
-                            self.node_keys.push(node_id);
-
-                            binary_node
-                        }
-                    };
-                    self.trie
-                        .cache_leaf_modified
-                        .insert(key_bytes, InsertOrRemove::Insert(value));
-                    let final_hash = self.hash_up_merkle_path(
-                        key,
-                        current_hash,
-                        &path_nodes,
-                        true, // Skip last node only if it's not the root
-                    );
-                    Ok(final_hash)
+                    if child_height as usize == key.len() {
+                        let current_hash = match direction {
+                            Direction::Left => {
+                                hash_binary_node::<H>(value, *right)
+                            }
+                            Direction::Right => {
+                                hash_binary_node::<H>(*left, value)
+                            }
+                        };
+                        self.trie
+                            .cache_leaf_modified
+                            .insert(key_bytes, InsertOrRemove::Insert(value));
+                        let final_hash = self.hash_up_merkle_path(
+                            key,
+                            current_hash,
+                            &path_nodes,
+                            true,
+                        );
+                        Ok(final_hash)
+                    } else {
+                        Ok(match direction {
+                            Direction::Left => *left,
+                            Direction::Right => *right,
+                        })
+                    }
                 }
             },
             None => {
@@ -436,10 +453,10 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 let node_id =
                     self.trie
                         .insert_edge_node(0, &Path(key.to_bitvec()), value, edge_node, key)?;
-                self.node_keys.push(node_id);
+                self.node_keys.insert(node_id);
 
                 println!("Inserted root node!: {:?}", node_id);
-                // self.trie.root_node = Some(RootHandle::Loaded(node_id));
+                self.trie.root_node = Some(RootHandle::Loaded(node_id));
 
                 self.trie
                     .cache_leaf_modified
@@ -453,10 +470,11 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         &mut self,
         db: &mut KeyValueDB<DB, ID>,
     ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
-        let db_changes = self.trie.get_updates::<DB>()?;
+        let db_changes = self.get_updates::<DB>()?;
 
         let mut batch = db.create_batch();
         for (key, value) in db_changes {
+            println!("key: {:?}, value: {:?}", key, value);
             match value {
                 InsertOrRemove::Insert(value) => {
                     db.insert(&key, &value, Some(&mut batch))?;
@@ -477,6 +495,144 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         self.trie.root_hash(db)
     }
 
+    fn get_updates<DB: BonsaiDatabase>(
+        &mut self,
+    ) -> Result<
+        impl Iterator<Item = (TrieKey, InsertOrRemove<ByteVec>)>,
+        BonsaiStorageError<DB::DatabaseError>,
+    > {
+        let mut updates = HashMap::new();
+        println!("Death row before committing: {:?}", self.trie.death_row);
+        // Przenieś death_row
+        for node_key in mem::take(&mut self.trie.death_row) {
+            println!("NODES IN DEATH ROW: {:?}", node_key);
+            updates.insert(node_key, InsertOrRemove::Remove);
+        }
+        println!("Before committing there are {:?} nodes in the trie", self.trie.nodes.len());
+
+        if let Some(RootHandle::Loaded(node_id)) = &self.trie.root_node {
+            // Commit subtree - wszystkie hashe są już policzone
+            self.commit_subtree::<DB>(
+                &mut updates,
+                *node_id,
+                Path::default(),
+            )?;
+            println!("After committing subtree there are still {:?} nodes in the trie", self.trie.nodes.len());
+            println!("After committing subtree there are {:?} node keys", self.node_keys);
+        }
+        self.trie.root_node = None;
+
+        // Przenieś cache_leaf_modified
+        for (key, value) in mem::take(&mut self.trie.cache_leaf_modified) {
+            updates.insert(
+                TrieKey::new(&self.trie.identifier, TrieKeyType::Flat, &key),
+                match value {
+                    InsertOrRemove::Insert(value) => InsertOrRemove::Insert(value.encode_bytevec()),
+                    InsertOrRemove::Remove => InsertOrRemove::Remove,
+                },
+            );
+        }
+
+        Ok(updates.into_iter())
+    }
+
+    fn commit_subtree<DB: BonsaiDatabase>(
+        &mut self,
+        updates: &mut HashMap<TrieKey, InsertOrRemove<ByteVec>>,
+        node_id: NodeKey,
+        path: Path,
+    ) -> Result<Felt, BonsaiStorageError<DB::DatabaseError>> {
+        // Najpierw sprawdź czy node jest w node_keys
+        if !self.node_keys.contains(&node_id) {
+            println!("Node is not in node_keys");
+            self.trie.nodes.remove(node_id);
+            return Ok(Felt::ZERO);  // lub inna wartość która zasygnalizuje że node został pominięty
+        }
+
+        match self.trie.nodes.remove(node_id) {
+            Some(Node::Binary(binary)) => {
+                println!("Committing BINARY node: {:?}", node_id);
+                let left_path = path.new_with_direction(Direction::Left);
+                let left_hash = match binary.left {
+                    NodeHandle::Hash(hash) => {
+                        // Sprawdź czy mamy node'a z tym hashem w node_keys
+                        if let Some(&child_id) = self.node_keys.iter()
+                            .find(|&&id| self.trie.nodes.get(id)
+                                .map_or(false, |n| n.get_hash() == Some(hash)))
+                        {
+                            self.commit_subtree::<DB>(updates, child_id, left_path)?
+                        } else {
+                            hash
+                        }
+                    }
+                    NodeHandle::InMemory(child_id) => {
+                        self.commit_subtree::<DB>(updates, child_id, left_path)?
+                    }
+                };
+
+                let right_path = path.new_with_direction(Direction::Right);
+                let right_hash = match binary.right {
+                    NodeHandle::Hash(hash) => {
+                        // To samo dla prawego dziecka
+                        if let Some(&child_id) = self.node_keys.iter()
+                            .find(|&&id| self.trie.nodes.get(id)
+                                .map_or(false, |n| n.get_hash() == Some(hash)))
+                        {
+                            self.commit_subtree::<DB>(updates, child_id, right_path)?
+                        } else {
+                            hash
+                        }
+                    }
+                    NodeHandle::InMemory(child_id) => {
+                        self.commit_subtree::<DB>(updates, child_id, right_path)?
+                    }
+                };
+
+                let hash = binary.hash.expect("Hash should be computed");
+                let key_bytes: ByteVec = path.into();
+                updates.insert(
+                    TrieKey::new(&self.trie.identifier, TrieKeyType::Trie, &key_bytes),
+                    InsertOrRemove::Insert(Node::Binary(binary).encode_bytevec()),
+                );
+                Ok(hash)
+            }
+            Some(Node::Edge(edge)) => {
+                println!("Committing EDGE node: {:?}", node_id);
+                let mut child_path = path.clone();
+                child_path.0.extend(&edge.path.0);
+                let child_hash = match edge.child {
+                    NodeHandle::Hash(hash) => {
+                        // To samo dla edge node
+                        if let Some(&child_id) = self.node_keys.iter()
+                            .find(|&&id| self.trie.nodes.get(id)
+                                .map_or(false, |n| n.get_hash() == Some(hash)))
+                        {
+                            self.commit_subtree::<DB>(updates, child_id, child_path)?
+                        } else {
+                            hash
+                        }
+                    }
+                    NodeHandle::InMemory(child_id) => {
+                        self.commit_subtree::<DB>(updates, child_id, child_path)?
+                    }
+                };
+
+                let hash = edge.hash.expect("Hash should be computed");
+                let key_bytes: ByteVec = path.into();
+                updates.insert(
+                    TrieKey::new(&self.trie.identifier, TrieKeyType::Trie, &key_bytes),
+                    InsertOrRemove::Insert(Node::Edge(edge).encode_bytevec()),
+                );
+                Ok(hash)
+            }
+            None => {
+                Err(BonsaiStorageError::Trie(
+                    "Node not found in memory".to_string(),
+                ))
+            }
+        }
+    }
+
     fn get_node_hash(&self, handle: &NodeHandle) -> Felt {
         match handle {
             NodeHandle::Hash(hash) => *hash,
@@ -494,9 +650,11 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         path_nodes: &[(ProofNode, u64)],
         skip_last: bool, // whether to skip the last element (e.g. if it has already been processed)
     ) -> Felt {
+        println!("path_nodes: {:?}", path_nodes);
         let iter = path_nodes.iter().rev().skip(if skip_last { 1 } else { 0 });
 
         for (node, height) in iter {
+            println!("IS THERE ANY node: {:?}, height: {:?}", node, height);
             match node {
                 ProofNode::Binary { left, right } => {
                     let direction = Direction::from(key[*height as usize]);
@@ -508,7 +666,8 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                                 .trie
                                 .insert_binary_node(*height, current_hash, *right, binary_node)
                                 .unwrap();
-                            self.node_keys.push(node_id);
+                            
+                            self.node_keys.insert(node_id);
 
                             binary_node
                         }
@@ -519,7 +678,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                                 .trie
                                 .insert_binary_node(*height, *left, current_hash, binary_node)
                                 .unwrap();
-                            self.node_keys.push(node_id);
+                            self.node_keys.insert(node_id);
 
                             binary_node
                         }
@@ -535,7 +694,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                         .trie
                         .insert_edge_node(*height, edge_path, current_hash, edge_node, key)
                         .unwrap();
-                    self.node_keys.push(node_id);
+                    self.node_keys.insert(node_id);
 
                     current_hash = edge_node;
                 }
@@ -543,42 +702,81 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         }
 
         // self.update_node_references();
-        // println!("NODE KEYS: {:?}", self.node_keys);
+        println!("NODE KEYS: {:?}", self.node_keys);
+        println!("NODES IN TRIE: {:?}", self.trie.nodes);
 
         current_hash
     }
 
     fn update_node_references(&mut self) {
-        let mut hash_to_node: HashMap<Felt, NodeKey> = HashMap::new();
-
-        for node_key in &self.node_keys {
-            if let Some(node) = self.trie.nodes.get(*node_key) {
-                if let Some(hash) = node.get_hash() {
-                    hash_to_node.insert(hash, *node_key);
+        // Mapowanie z (height, value) na NodeKey dla binary nodes
+        let mut binary_node_map: HashMap<(u64, Felt, Felt), NodeKey> = HashMap::new();
+        // Mapowanie z (height, value) na NodeKey dla edge nodes
+        let mut edge_node_map: HashMap<(u64, Felt), NodeKey> = HashMap::new();
+        
+        // Najpierw zbierz wszystkie node'y
+        for &node_key in &self.node_keys {
+            if let Some(node) = self.trie.nodes.get(node_key) {
+                match node {
+                    Node::Binary(binary) => {
+                        let left_val = match binary.left {
+                            NodeHandle::Hash(h) => h,
+                            NodeHandle::InMemory(_) => continue, // już połączone
+                        };
+                        let right_val = match binary.right {
+                            NodeHandle::Hash(h) => h,
+                            NodeHandle::InMemory(_) => continue,
+                        };
+                        binary_node_map.insert((binary.height, left_val, right_val), node_key);
+                    }
+                    Node::Edge(edge) => {
+                        let child_val = match edge.child {
+                            NodeHandle::Hash(h) => h,
+                            NodeHandle::InMemory(_) => continue, // już połączone
+                        };
+                        edge_node_map.insert((edge.height, child_val), node_key);
+                    }
                 }
             }
         }
-
-        for node_key in &self.node_keys {
-            if let Some(node) = self.trie.nodes.get_mut(*node_key) {
+    
+        // Teraz połącz node'y
+        for &node_key in &self.node_keys {
+            if let Some(node) = self.trie.nodes.get_mut(node_key) {
                 match node {
                     Node::Binary(binary) => {
-                        if let NodeHandle::Hash(left_hash) = binary.left {
-                            if let Some(&left_node_key) = hash_to_node.get(&left_hash) {
-                                binary.left = NodeHandle::InMemory(left_node_key);
+                        if let NodeHandle::Hash(left_val) = binary.left {
+                            // Sprawdź czy child jest binary node
+                            if let Some(&child_key) = binary_node_map.get(&(binary.height - 1, left_val, left_val)) {
+                                binary.left = NodeHandle::InMemory(child_key);
+                            }
+                            // Sprawdź czy child jest edge node
+                            else if let Some(&child_key) = edge_node_map.get(&(binary.height - 1, left_val)) {
+                                binary.left = NodeHandle::InMemory(child_key);
                             }
                         }
-
-                        if let NodeHandle::Hash(right_hash) = binary.right {
-                            if let Some(&right_node_key) = hash_to_node.get(&right_hash) {
-                                binary.right = NodeHandle::InMemory(right_node_key);
+                        if let NodeHandle::Hash(right_val) = binary.right {
+                            // Sprawdź czy child jest binary node
+                            if let Some(&child_key) = binary_node_map.get(&(binary.height - 1, right_val, right_val)) {
+                                binary.right = NodeHandle::InMemory(child_key);
+                            }
+                            // Sprawdź czy child jest edge node
+                            else if let Some(&child_key) = edge_node_map.get(&(binary.height - 1, right_val)) {
+                                binary.right = NodeHandle::InMemory(child_key);
                             }
                         }
                     }
                     Node::Edge(edge) => {
-                        if let NodeHandle::Hash(child_hash) = edge.child {
-                            if let Some(&child_node_key) = hash_to_node.get(&child_hash) {
-                                edge.child = NodeHandle::InMemory(child_node_key);
+                        if let NodeHandle::Hash(child_val) = edge.child {
+                            // Dla edge node'a, child jest na wysokości height + path.len()
+                            let child_height = edge.height + edge.path.len() as u64;
+                            // Sprawdź czy child jest binary node
+                            if let Some(&child_key) = binary_node_map.get(&(child_height, child_val, child_val)) {
+                                edge.child = NodeHandle::InMemory(child_key);
+                            }
+                            // Sprawdź czy child jest edge node
+                            else if let Some(&child_key) = edge_node_map.get(&(child_height, child_val)) {
+                                edge.child = NodeHandle::InMemory(child_key);
                             }
                         }
                     }
@@ -1033,7 +1231,7 @@ mod tests {
 
         let mut keys = Vec::new();
         let mut values = Vec::new();
-        for i in 1..=5 {
+        for i in 1..=6 {
             let mut key = vec![0; 3];
             key[0] = i;
             let value = Felt::from(i as u64 + 100);
@@ -1053,6 +1251,19 @@ mod tests {
             PartialTrie::<Pedersen>::new(identifier.clone().into(), 24, current_root);
         let mut next_roots = Vec::new();
         let mut i = 0;
+
+        // println!("--------------------------------");
+        // //testing
+        // for (key, value) in keys.iter().zip(values.iter()).take(2) {
+        //     bonsai_storage2.insert(&identifier2, key, value).unwrap();
+        // }
+
+        // bonsai_storage2.commit(id_builder.new_id()).unwrap();
+
+        // let actual_root = bonsai_storage2.root_hash(&identifier2).unwrap();
+        // println!("TESTING! root: {:?}", actual_root);
+        // println!("--------------------------------");
+
         for (key, value) in keys.iter().zip(values.iter()).skip(3) {
             let tree1 = bonsai_storage1
                 .tries

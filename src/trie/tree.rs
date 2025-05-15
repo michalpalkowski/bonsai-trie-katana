@@ -164,11 +164,12 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         let node_id = self.nodes.insert(edge_node);
 
         if height == 0 {
+            // self.death_row.insert(TrieKey::Trie(bitslice_to_bytes(&key[..height as usize])));
             self.root_node = Some(RootHandle::Loaded(node_id));
         }
 
-        let key_bytes = bitslice_to_bytes(&key[..height as usize]);
-        self.death_row.insert(TrieKey::Trie(key_bytes));
+        // let key_bytes = bitslice_to_bytes(&key[..height as usize]);
+        // self.death_row.insert(TrieKey::Trie(key_bytes));
 
         Ok(node_id)
     }
@@ -186,6 +187,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                 // load the node
                 let id = self
                     .load_db_node(db, &TrieKey::new(&self.identifier, TrieKeyType::Trie, &[0]))?;
+                println!("ID OF ROOT NODE after load_db_node: {:?}", id);
 
                 match id {
                     Some(id) => {
@@ -235,7 +237,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         path: &Path,
     ) -> Result<NodeKey, BonsaiStorageError<DB::DatabaseError>> {
         match handle {
-            NodeHandle::Hash(_) => {
+            NodeHandle::Hash(hash) => {
                 // TODO(perf): useless allocs everywhere here...
 
                 let path: ByteVec = path.clone().into();
@@ -350,7 +352,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
     > {
         let mut updates = HashMap::new();
         for node_key in mem::take(&mut self.death_row) {
-            println!("Removing node: {:?}", node_key);
             updates.insert(node_key, InsertOrRemove::Remove);
         }
 
@@ -358,7 +359,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
             // compute hashes
             let mut hashes = vec![];
             self.compute_root_hash::<DB>(&mut hashes)?;
-
             // commit the tree
             self.commit_subtree::<DB>(
                 &mut updates,
@@ -366,15 +366,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                 Path::default(),
                 &mut hashes.into_iter(),
             )?;
-            println!(
-                "After commit_subtree, nodes len in memory: {:?}",
-                self.nodes.len()
-            );
-            println!(
-                "After commit_subtree, nodes in memory: {:?}",
-                self.nodes.iter().collect::<Vec<_>>()
-            );
-            println!("After commit_subtree, root node: {:?}", self.root_node);
         }
 
         self.root_node = None; // unloaded
@@ -585,7 +576,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                     }
                 };
 
-                println!("Committing node: {:?}", node_id);
                 let hash = hashes.next().expect("mismatched hash state");
                 binary.hash = Some(hash);
                 binary.left = NodeHandle::Hash(left_hash);
@@ -606,7 +596,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                         self.commit_subtree::<DB>(updates, node_id, child_path, hashes)?
                     }
                 };
-                println!("Committing node: {:?}", node_id);
+
                 let hash = hashes.next().expect("mismatched hash state");
                 edge.hash = Some(hash);
                 edge.child = NodeHandle::Hash(child_hash);
