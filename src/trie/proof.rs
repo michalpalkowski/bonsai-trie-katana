@@ -242,7 +242,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                 node_hash: Felt,
                 _prev_height: usize,
             ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
-                println!("WE ARE IN VISIT_PARTIAL_NODE");
 
                 if self.2.contains(&node_id) {
                     println!("Node already visited: {:?}", node_id);
@@ -251,13 +250,10 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                 self.2.insert(node_id);
 
                 let node = tree.get_node_mut::<DB>(node_id)?;
-                // if let Some(RootHandle::Loaded(root_id)) = tree.root_node {
-                //     let root_node = tree.get_node_mut::<DB>(root_id)?;
 
                 // We create ProofNode from root node using existing hashes
                 let proof_node = match node {
                     Node::Binary(binary_node) => {
-                        println!("VISITING BINARY NODE: {:?}", binary_node);
                         match (binary_node.left, binary_node.right) {
                             (NodeHandle::Hash(left), NodeHandle::Hash(right)) => {
                                 ProofNode::Binary { left, right }
@@ -269,7 +265,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                         }
                     }
                     Node::Edge(edge_node) => {
-                        println!("VISITING EDGE NODE: {:?}", edge_node);
                         if let NodeHandle::Hash(child) = edge_node.child {
                             ProofNode::Edge {
                                 child,

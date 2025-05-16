@@ -385,7 +385,6 @@ impl<H: StarkHash> MerkleTree<H> {
         //     }
         // }
         println!("Looking for node with hash: {:?}", hash);
-        println!("Current nodes in tree: {:?}", self.nodes);
 
         // Go through all nodes in the tree
         for (node_id, node) in &self.nodes {

@@ -187,7 +187,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                 // load the node
                 let id = self
                     .load_db_node(db, &TrieKey::new(&self.identifier, TrieKeyType::Trie, &[0]))?;
-                println!("ID OF ROOT NODE after load_db_node: {:?}", id);
 
                 match id {
                     Some(id) => {
