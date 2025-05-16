@@ -229,57 +229,66 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         db: &KeyValueDB<DB, ID>,
         keys: impl IntoIterator<Item = impl AsRef<BitSlice>>,
         proof: &MultiProof,
-        current_felt: Felt,
+        current_root: Felt,
     ) -> Result<MultiProof, BonsaiStorageError<DB::DatabaseError>> {
         let max_height = self.max_height;
 
-        struct ProofVisitor<H>(MultiProof, PhantomData<H>);
+        struct ProofVisitor<H>(MultiProof, PhantomData<H>, HashSet<NodeKey>);
         impl<H: StarkHash + Send + Sync> PartialNodeVisitor<H> for ProofVisitor<H> {
             fn visit_partial_node<DB: BonsaiDatabase>(
                 &mut self,
                 tree: &mut MerkleTree<H>,
+                node_id: NodeKey,
                 node_hash: Felt,
                 _prev_height: usize,
             ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
                 println!("WE ARE IN VISIT_PARTIAL_NODE");
-                if let Some(RootHandle::Loaded(root_id)) = tree.root_node {
-                    let root_node = tree.get_node_mut::<DB>(root_id)?;
 
-                    // Tworzymy ProofNode z root node'a używając istniejących hashy
-                    let proof_node = match root_node {
-                        Node::Binary(binary_node) => {
-                            println!("VISITING BINARY NODE: {:?}", binary_node);
-                            match (binary_node.left, binary_node.right) {
-                                (NodeHandle::Hash(left), NodeHandle::Hash(right)) => {
-                                    ProofNode::Binary { left, right }
-                                }
-                                _ => {
-                                    println!("IGNORING!@: {:?}", binary_node);
-                                    return Ok(()); // ignorujemy nody które nie mają hashy
-                                }
-                            }
-                        }
-                        Node::Edge(edge_node) => {
-                            println!("VISITING EDGE NODE: {:?}", edge_node);
-                            if let NodeHandle::Hash(child) = edge_node.child {
-                                ProofNode::Edge {
-                                    child,
-                                    path: edge_node.path.clone(),
-                                }
-                            } else {
-                                println!("IGNORING!@: {:?}", edge_node);
-                                return Ok(()); // ignorujemy nody które nie mają hashy
-                            }
-                        }
-                    };
-
-                    // Dodajemy node do proof'a
-                    self.0 .0.insert(node_hash, proof_node);
+                if self.2.contains(&node_id) {
+                    println!("Node already visited: {:?}", node_id);
+                    return Ok(());
                 }
+                self.2.insert(node_id);
+
+                let node = tree.get_node_mut::<DB>(node_id)?;
+                // if let Some(RootHandle::Loaded(root_id)) = tree.root_node {
+                //     let root_node = tree.get_node_mut::<DB>(root_id)?;
+
+                // We create ProofNode from root node using existing hashes
+                let proof_node = match node {
+                    Node::Binary(binary_node) => {
+                        println!("VISITING BINARY NODE: {:?}", binary_node);
+                        match (binary_node.left, binary_node.right) {
+                            (NodeHandle::Hash(left), NodeHandle::Hash(right)) => {
+                                ProofNode::Binary { left, right }
+                            }
+                            _ => {
+                                println!("IGNORING!@: {:?}", binary_node);
+                                return Ok(());
+                            }
+                        }
+                    }
+                    Node::Edge(edge_node) => {
+                        println!("VISITING EDGE NODE: {:?}", edge_node);
+                        if let NodeHandle::Hash(child) = edge_node.child {
+                            ProofNode::Edge {
+                                child,
+                                path: edge_node.path.clone(),
+                            }
+                        } else {
+                            println!("IGNORING!@: {:?}", edge_node);
+                            return Ok(());
+                        }
+                    }
+                };
+
+                self.0 .0.insert(node_hash, proof_node);
+                self.2.insert(node_id);
                 Ok(())
             }
         }
-        let mut visitor = ProofVisitor::<H>(MultiProof(Default::default()), PhantomData);
+        let mut visitor =
+            ProofVisitor::<H>(MultiProof(Default::default()), PhantomData, HashSet::new());
 
         let mut iter = self.iter(db);
         for key in keys {
@@ -290,7 +299,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                     got: key.len(),
                 });
             }
-            iter.traverse_to_partial(&mut visitor, key, proof, current_felt)?;
+            iter.traverse_to_partial(&mut visitor, key, proof, current_root)?;
         }
 
         Ok(visitor.0)

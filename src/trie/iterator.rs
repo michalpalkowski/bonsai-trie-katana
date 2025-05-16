@@ -36,6 +36,7 @@ pub trait PartialNodeVisitor<H: StarkHash> {
     fn visit_partial_node<DB: BonsaiDatabase>(
         &mut self,
         tree: &mut MerkleTree<H>,
+        node_key: NodeKey,
         node_hash: Felt,
         prev_height: usize,
     ) -> Result<(), BonsaiStorageError<DB::DatabaseError>>;
@@ -46,6 +47,7 @@ impl<H: StarkHash> PartialNodeVisitor<H> for NoopPartialVisitor<H> {
     fn visit_partial_node<DB: BonsaiDatabase>(
         &mut self,
         _tree: &mut MerkleTree<H>,
+        _node_key: NodeKey,
         _node_hash: Felt,
         _prev_height: usize,
     ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
@@ -311,7 +313,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         visitor: &mut V,
         key: &BitSlice,
         proof: &MultiProof,
-        current_felt: Felt,
+        current_root: Felt,
     ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
         if key.is_empty() {
             self.current_nodes_heights.clear();
@@ -341,16 +343,27 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         let mut next_felt =
             if let Some((node_felt, height)) = self.current_partial_nodes_heights.pop() {
                 self.current_path.truncate(height);
-                visitor.visit_partial_node::<DB>(self.tree, node_felt, height)?;
+                if let Some(node_key) = self.tree.get_node_by_hash::<DB>(node_felt)? {
+                    visitor.visit_partial_node::<DB>(self.tree, node_key, node_felt, height)?;
+                }
                 self.traverse_one_partial(node_felt, height, key)?
             } else {
                 self.current_path.clear();
-                visitor.visit_partial_node::<DB>(self.tree, current_felt, 0)?;
-                Some(current_felt)
+                if let Some(node_key) = self.tree.get_node_by_hash::<DB>(current_root)? {
+                    visitor.visit_partial_node::<DB>(self.tree, node_key, current_root, 0)?;
+                }
+                Some(current_root)
             };
 
         while let Some(felt) = next_felt {
-            visitor.visit_partial_node::<DB>(self.tree, felt, self.current_path.len())?;
+            if let Some(node_key) = self.tree.get_node_by_hash::<DB>(felt)? {
+                visitor.visit_partial_node::<DB>(
+                    self.tree,
+                    node_key,
+                    felt,
+                    self.current_path.len(),
+                )?;
+            }
             next_felt = self.traverse_one_partial(felt, self.current_path.len(), key)?;
         }
 
@@ -363,21 +376,25 @@ impl<H: StarkHash> MerkleTree<H> {
         &self,
         hash: Felt,
     ) -> Result<Option<NodeKey>, BonsaiStorageError<DB::DatabaseError>> {
-        // Najpierw sprawdź root node
-        if let Some(RootHandle::Loaded(root_id)) = self.root_node {
-            if let Some(node) = self.nodes.get(root_id) {
-                if node.get_hash() == Some(hash) {
-                    return Ok(Some(root_id));
-                }
-            }
-        }
+        // First check root node
+        // if let Some(RootHandle::Loaded(root_id)) = self.root_node {
+        //     if let Some(node) = self.nodes.get(root_id) {
+        //         if node.get_hash() == Some(hash) {
+        //             return Ok(Some(root_id));
+        //         }
+        //     }
+        // }
+        println!("Looking for node with hash: {:?}", hash);
+        println!("Current nodes in tree: {:?}", self.nodes);
 
-        // Przejdź przez wszystkie nody w drzewie
+        // Go through all nodes in the tree
         for (node_id, node) in &self.nodes {
             if node.get_hash() == Some(hash) {
                 return Ok(Some(node_id));
             }
         }
+
+        println!("No node found with hash: {:?}", hash);
 
         Ok(None)
     }
