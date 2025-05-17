@@ -1,7 +1,7 @@
 use super::{
     merkle_node::{Direction, Node, NodeHandle},
     path::Path,
-    tree::{MerkleTree, NodeKey, RootHandle},
+    tree::{MerkleTree, NodeKey, ProofNodeChildren, RootHandle},
 };
 use crate::{
     id::Id, key_value_db::KeyValueDB, BitSlice, BonsaiDatabase, BonsaiStorageError, MultiProof,
@@ -37,7 +37,6 @@ pub trait PartialNodeVisitor<H: StarkHash> {
         &mut self,
         tree: &mut MerkleTree<H>,
         node_key: NodeKey,
-        node_hash: Felt,
         prev_height: usize,
     ) -> Result<(), BonsaiStorageError<DB::DatabaseError>>;
 }
@@ -48,7 +47,6 @@ impl<H: StarkHash> PartialNodeVisitor<H> for NoopPartialVisitor<H> {
         &mut self,
         _tree: &mut MerkleTree<H>,
         _node_key: NodeKey,
-        _node_hash: Felt,
         _prev_height: usize,
     ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
         Ok(())
@@ -63,10 +61,11 @@ pub struct MerkleTreeIterator<'a, H: StarkHash, DB: BonsaiDatabase, ID: Id> {
     /// The loaded nodes in the current path with their corresponding heights. Height is at the base of the node, meaning
     /// the first node here will always have height 0.
     pub(crate) current_nodes_heights: Vec<(NodeKey, usize)>,
-    pub(crate) current_partial_nodes_heights: Vec<(Felt, usize)>,
+    pub(crate) current_partial_nodes_heights: Vec<(NodeKey, usize)>,
     /// Current leaf hash. Note that partial traversal (traversal that stops midway through the tree) will
     /// also update this field if an exact match for the key is found, even though we may not have reached a leaf.
     pub(crate) leaf_hash: Option<Felt>,
+    pub(crate) proof: Option<MultiProof>,
 }
 
 impl<'a, H: StarkHash, DB: BonsaiDatabase, ID: Id> fmt::Debug
@@ -90,6 +89,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
             current_nodes_heights: Vec::with_capacity(251),
             current_partial_nodes_heights: Vec::with_capacity(251),
             leaf_hash: None,
+            proof: None,
         }
     }
 
@@ -259,64 +259,92 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
 
     fn traverse_one_partial(
         &mut self,
-        current_felt: Felt,
+        node_id: NodeKey,
         height: usize,
         key: &BitSlice,
-    ) -> Result<Option<Felt>, BonsaiStorageError<DB::DatabaseError>> {
+    ) -> Result<Option<NodeKey>, BonsaiStorageError<DB::DatabaseError>> {
         self.current_partial_nodes_heights
-            .push((current_felt, self.current_path.len()));
+            .push((node_id, self.current_path.len()));
 
-        let node = if let Some(node_id) = self.tree.get_node_by_hash::<DB>(current_felt)? {
-            self.tree.get_node_mut::<DB>(node_id)?
-        } else {
-            return Ok(None);
-        };
-
-        let proof_node = match node {
-            Node::Binary(binary_node) => {
-                let left = binary_node.left.as_hash().unwrap();
-                let right = binary_node.right.as_hash().unwrap();
-                ProofNode::Binary { left, right }
-            }
-            Node::Edge(edge_node) => {
-                let child = edge_node.child.as_hash().unwrap();
-                ProofNode::Edge {
-                    child,
-                    path: edge_node.path.clone(),
-                }
-            }
-        };
-
-        match proof_node {
+        let (proof_node, children) = self.tree.get_proof_node_mut::<DB>(node_id)?;
+        let child = match proof_node {
             ProofNode::Binary { left, right } => {
+                log::trace!(
+                    "Continue from binary node current_path={:?} key={:b}",
+                    self.current_path,
+                    key,
+                );
                 let next_direction = Direction::from(key[self.current_path.len()]);
                 self.current_path.push(bool::from(next_direction));
-
-                let next_felt = match next_direction {
+                match next_direction {
                     Direction::Left => left,
                     Direction::Right => right,
-                };
-                Ok(Some(next_felt))
+                }
             }
             ProofNode::Edge { child, path } => {
-                if height + path.len() > key.len() || key[height..height + path.len()] != path.0 {
-                    return Ok(None);
+                // if self.current_path.len() + path.len() > key.len() {
+                //     self.leaf_hash = None;
+                //     return Ok(None);
+                // }
+                self.current_path.extend_from_bitslice(&path);
+                child
+            }
+        };
+
+        if self.current_path.len() >= key.len() {
+            self.leaf_hash = if self.current_path.len() == key.len() {
+                Some(*child)
+            } else {
+                None
+            };
+            return Ok(None); // koniec przechodzenia
+        }
+
+        let proof_clone = self.proof.clone().unwrap().0.clone();
+        // Pobierz węzeł z proofa dla tego hashu
+        let Some(new_proof_node) = proof_clone.get(child) else {
+            self.leaf_hash = None;
+            return Ok(None);
+        };
+        let new_proof_node_clone = new_proof_node.clone();
+
+        // Create a new node in proof_nodes
+        let new_child_key = self.tree.proof_nodes.insert((
+            new_proof_node_clone.clone(),
+            ProofNodeChildren::new(&new_proof_node_clone),
+        ));
+
+        // Update children ref in parent
+        match self.tree.get_proof_node_mut::<DB>(node_id)? {
+            (_, children) => {
+                let next_direction = Direction::from(
+                    *self
+                        .current_path
+                        .last()
+                        .expect("current path should have a length > 0 at this point"),
+                );
+                match children {
+                    ProofNodeChildren::Binary { left, right } => match next_direction {
+                        Direction::Left => *left = Some(new_child_key),
+                        Direction::Right => *right = Some(new_child_key),
+                    },
+                    ProofNodeChildren::Edge { child } => {
+                        *child = Some(new_child_key);
+                    }
                 }
-                self.current_path.extend_from_bitslice(&path.0);
-                Ok(Some(child))
             }
         }
+
+        Ok(Some(new_child_key))
     }
 
     pub fn traverse_to_partial<V: PartialNodeVisitor<H>>(
         &mut self,
         visitor: &mut V,
         key: &BitSlice,
-        proof: &MultiProof,
-        current_root: Felt,
     ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
         if key.is_empty() {
-            self.current_nodes_heights.clear();
+            self.current_partial_nodes_heights.clear();
             self.current_path.clear();
             self.leaf_hash = None;
             return Ok(());
@@ -339,35 +367,75 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         self.current_partial_nodes_heights.truncate(nodes_new_len);
         self.current_path.truncate(key.len());
 
-        println!("BEFORE NEXT FELT");
-        let mut next_felt =
-            if let Some((node_felt, height)) = self.current_partial_nodes_heights.pop() {
+        let mut next_to_visit =
+            if let Some((node_id, height)) = self.current_partial_nodes_heights.pop() {
                 self.current_path.truncate(height);
-                if let Some(node_key) = self.tree.get_node_by_hash::<DB>(node_felt)? {
-                    visitor.visit_partial_node::<DB>(self.tree, node_key, node_felt, height)?;
-                }
-                self.traverse_one_partial(node_felt, height, key)?
+                visitor.visit_partial_node::<DB>(self.tree, node_id, height)?;
+                self.traverse_one_partial(node_id, height, key)?
             } else {
+                // Start from tree root.
                 self.current_path.clear();
-                if let Some(node_key) = self.tree.get_node_by_hash::<DB>(current_root)? {
-                    visitor.visit_partial_node::<DB>(self.tree, node_key, current_root, 0)?;
-                }
-                Some(current_root)
+                let Some(node_id) = self.tree.load_root_node(self.db)? else {
+                    // empty tree, not found
+                    self.leaf_hash = None;
+                    return Ok(());
+                };
+
+                // Create proof node for root
+                let node = self.tree.get_node_mut::<DB>(node_id)?;
+                let proof_node = match node {
+                    Node::Binary(binary_node) => {
+                        let (left, right) = (binary_node.left, binary_node.right);
+                        ProofNode::Binary {
+                            left: self.tree.get_or_compute_node_hash::<DB>(left)?,
+                            right: self.tree.get_or_compute_node_hash::<DB>(right)?,
+                        }
+                    }
+                    Node::Edge(edge_node) => {
+                        let (child, path) = (edge_node.child, edge_node.path.clone());
+                        ProofNode::Edge {
+                            child: self.tree.get_or_compute_node_hash::<DB>(child)?,
+                            path,
+                        }
+                    }
+                };
+                let proof_node_clone = proof_node.clone();
+                let proof_node_id = self
+                    .tree
+                    .proof_nodes
+                    .insert((proof_node, ProofNodeChildren::new(&proof_node_clone)));
+
+                visitor.visit_partial_node::<DB>(self.tree, proof_node_id, 0)?;
+                Some(proof_node_id)
             };
 
-        while let Some(felt) = next_felt {
-            if let Some(node_key) = self.tree.get_node_by_hash::<DB>(felt)? {
-                visitor.visit_partial_node::<DB>(
-                    self.tree,
-                    node_key,
-                    felt,
-                    self.current_path.len(),
-                )?;
-            }
-            next_felt = self.traverse_one_partial(felt, self.current_path.len(), key)?;
-        }
+        log::trace!(
+            "Starting traversal with path {:?}, next={:?}",
+            self.current_path,
+            next_to_visit
+        );
 
-        Ok(())
+        // Tree traversal :)
+        loop {
+            log::trace!("Loop start cur={:?} key={:b}", self.current_path, key);
+
+            let Some(node_id) = next_to_visit else {
+                return Ok(());
+            };
+
+            next_to_visit = self.traverse_one_partial(node_id, self.current_path.len(), key)?;
+            if let Some(next_id) = next_to_visit {
+                visitor.visit_partial_node::<DB>(self.tree, next_id, self.current_path.len())?;
+            }
+
+            log::trace!(
+                "Got nodeid={:?} height={}, cur path={:?}, next to visit={:?}",
+                node_id,
+                self.current_path.len(),
+                self.current_path,
+                next_to_visit
+            );
+        }
     }
 }
 

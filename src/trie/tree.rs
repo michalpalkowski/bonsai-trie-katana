@@ -6,11 +6,11 @@ use starknet_types_core::{felt::Felt, hash::StarkHash};
 
 use crate::trie::merkle_node::{hash_binary_node, hash_edge_node};
 use crate::trie::partial_trie::PartialTrieError;
-use crate::BitVec;
 use crate::{
     error::BonsaiStorageError, format, hash_map, id::Id, vec, BitSlice, BonsaiDatabase, ByteVec,
     EncodeExt, HashMap, HashSet, KeyValueDB, ToString, Vec,
 };
+use crate::{BitVec, ProofNode};
 
 use super::iterator::MerkleTreeIterator;
 use super::{
@@ -49,6 +49,28 @@ pub(crate) enum RootHandle {
     Loaded(NodeKey),
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum ProofNodeChildren {
+    Binary {
+        left: Option<NodeKey>,
+        right: Option<NodeKey>,
+    },
+    Edge {
+        child: Option<NodeKey>,
+    },
+}
+
+impl ProofNodeChildren {
+    pub fn new(proof_node: &ProofNode) -> Self {
+        match proof_node {
+            ProofNode::Binary { .. } => ProofNodeChildren::Binary {
+                left: None,
+                right: None,
+            },
+            ProofNode::Edge { .. } => ProofNodeChildren::Edge { child: None },
+        }
+    }
+}
 /// A Starknet binary Merkle-Patricia tree with a specific root entry-point and storage.
 ///
 /// This is used to update, mutate and access global Starknet state as well as individual contract
@@ -60,6 +82,7 @@ pub struct MerkleTree<H: StarkHash> {
     pub(crate) root_node: Option<RootHandle>,
     /// In-memory nodes.
     pub(crate) nodes: SlotMap<NodeKey, Node>,
+    pub(crate) proof_nodes: SlotMap<NodeKey, (ProofNode, ProofNodeChildren)>,
     /// Identifier of the tree in the database.
     pub(crate) identifier: ByteVec,
     /// The list of nodes that should be removed from the underlying database during the next commit.
@@ -77,6 +100,7 @@ impl<H: StarkHash> fmt::Debug for MerkleTree<H> {
         f.debug_struct("MerkleTree")
             .field("root_node", &self.root_node)
             .field("nodes", &self.nodes)
+            .field("proof_nodes", &self.proof_nodes)
             .field("identifier", &self.identifier)
             .field("death_row", &self.death_row)
             .field("cache_leaf_modified", &self.cache_leaf_modified)
@@ -115,6 +139,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         Self {
             root_node: None,
             nodes: Default::default(),
+            proof_nodes: Default::default(),
             identifier,
             death_row: HashSet::new(),
             cache_leaf_modified: HashMap::new(),
@@ -225,6 +250,15 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         node_key: NodeKey,
     ) -> Result<&mut Node, BonsaiStorageError<DB::DatabaseError>> {
         self.nodes.get_mut(node_key).ok_or_else(|| {
+            BonsaiStorageError::Trie(format!("Dangling in-memory node key: {node_key:?}"))
+        })
+    }
+
+    pub(crate) fn get_proof_node_mut<DB: BonsaiDatabase>(
+        &mut self,
+        node_key: NodeKey,
+    ) -> Result<&mut (ProofNode, ProofNodeChildren), BonsaiStorageError<DB::DatabaseError>> {
+        self.proof_nodes.get_mut(node_key).ok_or_else(|| {
             BonsaiStorageError::Trie(format!("Dangling in-memory node key: {node_key:?}"))
         })
     }

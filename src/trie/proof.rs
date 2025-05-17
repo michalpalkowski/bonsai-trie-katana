@@ -10,7 +10,7 @@
 use super::{
     merkle_node::{hash_binary_node, hash_edge_node, Direction},
     path::Path,
-    tree::MerkleTree,
+    tree::{MerkleTree, ProofNodeChildren},
 };
 use crate::{
     id::Id,
@@ -22,7 +22,7 @@ use crate::{
     },
     BitSlice, BitVec, BonsaiDatabase, BonsaiStorageError, HashMap, HashSet,
 };
-use core::{marker::PhantomData, mem};
+use core::{marker::PhantomData, mem, ops::DerefMut};
 use hashbrown::hash_set;
 use starknet_types_core::{felt::Felt, hash::StarkHash};
 
@@ -68,6 +68,8 @@ impl ProofNode {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct PartialPath(pub HashMap<NodeKey, (ProofNode, ProofNodeChildren)>);
 #[derive(Debug, Clone)]
 pub struct MultiProof(pub HashMap<Felt, ProofNode>);
 impl MultiProof {
@@ -224,66 +226,32 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         Ok(visitor.0)
     }
 
-    pub fn get_partial_multi_proof<DB: BonsaiDatabase, ID: Id>(
+    pub fn get_partial_path<DB: BonsaiDatabase, ID: Id>(
         &mut self,
         db: &KeyValueDB<DB, ID>,
         keys: impl IntoIterator<Item = impl AsRef<BitSlice>>,
-        proof: &MultiProof,
-        current_root: Felt,
-    ) -> Result<MultiProof, BonsaiStorageError<DB::DatabaseError>> {
+    ) -> Result<PartialPath, BonsaiStorageError<DB::DatabaseError>> {
         let max_height = self.max_height;
 
-        struct ProofVisitor<H>(MultiProof, PhantomData<H>, HashSet<NodeKey>);
-        impl<H: StarkHash + Send + Sync> PartialNodeVisitor<H> for ProofVisitor<H> {
+        struct PartialTrieVisitor<H>(PartialPath, PhantomData<H>);
+        impl<H: StarkHash + Send + Sync> PartialNodeVisitor<H> for PartialTrieVisitor<H> {
             fn visit_partial_node<DB: BonsaiDatabase>(
                 &mut self,
                 tree: &mut MerkleTree<H>,
                 node_id: NodeKey,
-                node_hash: Felt,
                 _prev_height: usize,
             ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
-
-                if self.2.contains(&node_id) {
-                    println!("Node already visited: {:?}", node_id);
-                    return Ok(());
-                }
-                self.2.insert(node_id);
-
-                let node = tree.get_node_mut::<DB>(node_id)?;
-
-                // We create ProofNode from root node using existing hashes
-                let proof_node = match node {
-                    Node::Binary(binary_node) => {
-                        match (binary_node.left, binary_node.right) {
-                            (NodeHandle::Hash(left), NodeHandle::Hash(right)) => {
-                                ProofNode::Binary { left, right }
-                            }
-                            _ => {
-                                println!("IGNORING!@: {:?}", binary_node);
-                                return Ok(());
-                            }
-                        }
-                    }
-                    Node::Edge(edge_node) => {
-                        if let NodeHandle::Hash(child) = edge_node.child {
-                            ProofNode::Edge {
-                                child,
-                                path: edge_node.path.clone(),
-                            }
-                        } else {
-                            println!("IGNORING!@: {:?}", edge_node);
-                            return Ok(());
-                        }
-                    }
-                };
-
-                self.0 .0.insert(node_hash, proof_node);
-                self.2.insert(node_id);
+                println!("AAAAAAAAaa");
+                let (proof_node, children) = tree.get_proof_node_mut::<DB>(node_id)?;
+                // Clone the node and children before inserting to avoid any potential issues with references
+                println!("AAAAAAAAaa");
+                self.0
+                     .0
+                    .insert(node_id, (proof_node.clone(), children.clone()));
                 Ok(())
             }
         }
-        let mut visitor =
-            ProofVisitor::<H>(MultiProof(Default::default()), PhantomData, HashSet::new());
+        let mut visitor = PartialTrieVisitor::<H>(PartialPath(Default::default()), PhantomData);
 
         let mut iter = self.iter(db);
         for key in keys {
@@ -294,7 +262,8 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                     got: key.len(),
                 });
             }
-            iter.traverse_to_partial(&mut visitor, key, proof, current_root)?;
+            println!("GOING TO TRAVERSE");
+            iter.traverse_to_partial(&mut visitor, key)?;
         }
 
         Ok(visitor.0)

@@ -26,18 +26,6 @@ use starknet_types_core::{felt::Felt, hash::StarkHash};
 use std::collections::HashSet;
 use std::mem;
 
-
-
-        // CHCĘ przejść po wszystkich nodeach w proof od dołu do góry rekurencyjnie i dodać do PartialTrieStorage;
-        // w kolejnych iteracjach sprawdzać czy w PartialTrieStorage jest node o takim hashu
-        // jeśli jest to resztą proof się nie przejmujemy i możemy zdealokować go a obliczenia kontynuujemy używając hashy z PartialTrieStorage
-        // jeśli nie to dodać do PartialTrieStorage node o takim hashu
-        // hash każdego nodea chce wyliczać uzywajac funkcji hash_edge_node lub hash_binary_node w zależności od typu nodea
-        // W przypadku nodea binary lewy/prawy hash określa path 
-
-
-
-
 #[derive(Debug, thiserror::Error)]
 pub enum PartialTrieError {
     #[error("Node not found in proof")]
@@ -95,15 +83,9 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
     ) -> Result<Felt, PartialTrieError> {
         let mut cache = NodeCache::new();
         let mut path = key.to_bitvec();
-        
+
         // Process the proof recursively from bottom to top
-        self.process_node(
-            &mut cache,
-            &proof,
-            current_root,
-            &mut path,
-            value,
-        )
+        self.process_node(&mut cache, &proof, current_root, &mut path, value)
     }
 
     /// Process a single node in the proof
@@ -127,7 +109,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
 
         // Clone the node from cache if it exists to avoid borrowing issues
         let cached_node = cache.get(&node_hash).cloned();
-        
+
         if let Some(node) = cached_node {
             println!("Found node in cache: {:?}", node);
             return self.process_cached_node(cache, &node, path, value);
@@ -136,12 +118,15 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         // Get node from proof
         let node = proof.0.get(&node_hash).ok_or_else(|| {
             println!("Node not found in proof: {:?}", node_hash);
-            println!("Available nodes in proof: {:?}", proof.0.keys().collect::<Vec<_>>());
+            println!(
+                "Available nodes in proof: {:?}",
+                proof.0.keys().collect::<Vec<_>>()
+            );
             PartialTrieError::NodeNotFound
         })?;
-        
+
         println!("Found node in proof: {:?}", node);
-        
+
         // Store in cache
         cache.insert(node_hash, node.clone());
 
@@ -154,17 +139,13 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                     Direction::Right => (*right, *left),
                 };
 
-                println!("Binary node - direction: {:?}, next_hash: {:?}, other_hash: {:?}", 
-                    direction, next_hash, other_hash);
+                println!(
+                    "Binary node - direction: {:?}, next_hash: {:?}, other_hash: {:?}",
+                    direction, next_hash, other_hash
+                );
 
                 // Process the path we're following
-                let new_hash = self.process_node(
-                    cache,
-                    proof,
-                    next_hash,
-                    path,
-                    value,
-                )?;
+                let new_hash = self.process_node(cache, proof, next_hash, path, value)?;
 
                 // Create new binary node
                 let binary_hash = match direction {
@@ -189,7 +170,10 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
 
                 Ok(binary_hash)
             }
-            ProofNode::Edge { child, path: edge_path } => {
+            ProofNode::Edge {
+                child,
+                path: edge_path,
+            } => {
                 println!("Edge node - child: {:?}, path: {:?}", child, edge_path);
 
                 // Find common path between edge_path and remaining path
@@ -200,7 +184,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 if branch_height >= path.len() {
                     // Create a binary node at the split point
                     let binary_hash = hash_binary_node::<H>(value, *child);
-                    
+
                     // Store new node in cache
                     let new_node = ProofNode::Binary {
                         left: value,
@@ -211,7 +195,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                     // If we have a common prefix, create an edge node
                     if !common.is_empty() {
                         let edge_hash = hash_edge_node::<H>(&Path(common.to_bitvec()), binary_hash);
-                        
+
                         // Store new node in cache
                         let new_node = ProofNode::Edge {
                             child: binary_hash,
@@ -228,7 +212,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 if common.is_empty() {
                     // Create a binary node at the current height
                     let binary_hash = hash_binary_node::<H>(value, *child);
-                    
+
                     // Store new node in cache
                     let new_node = ProofNode::Binary {
                         left: value,
@@ -244,17 +228,11 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 }
 
                 // Process the remaining path
-                let child_hash = self.process_node(
-                    cache,
-                    proof,
-                    *child,
-                    path,
-                    value,
-                )?;
+                let child_hash = self.process_node(cache, proof, *child, path, value)?;
 
                 // Create new edge node with the common prefix
                 let edge_hash = hash_edge_node::<H>(&Path(common.to_bitvec()), child_hash);
-                
+
                 println!("Created new edge node with hash: {:?}", edge_hash);
 
                 // Store new node in cache
@@ -283,7 +261,10 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
 
         // If we've reached the end of the path, return the value
         if path.is_empty() {
-            println!("Reached end of path in cached node, returning value: {:?}", value);
+            println!(
+                "Reached end of path in cached node, returning value: {:?}",
+                value
+            );
             return Ok(value);
         }
 
@@ -295,8 +276,10 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                     Direction::Right => (*right, *left),
                 };
 
-                println!("Cached binary node - direction: {:?}, next_hash: {:?}, other_hash: {:?}", 
-                    direction, next_hash, other_hash);
+                println!(
+                    "Cached binary node - direction: {:?}, next_hash: {:?}, other_hash: {:?}",
+                    direction, next_hash, other_hash
+                );
 
                 // Process the path we're following
                 let new_hash = self.process_node(
@@ -313,7 +296,10 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                     Direction::Right => hash_binary_node::<H>(other_hash, new_hash),
                 };
 
-                println!("Created new binary node from cache with hash: {:?}", binary_hash);
+                println!(
+                    "Created new binary node from cache with hash: {:?}",
+                    binary_hash
+                );
 
                 // Store new node in cache
                 let new_node = ProofNode::Binary {
@@ -330,8 +316,14 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
 
                 Ok(binary_hash)
             }
-            ProofNode::Edge { child, path: edge_path } => {
-                println!("Cached edge node - child: {:?}, path: {:?}", child, edge_path);
+            ProofNode::Edge {
+                child,
+                path: edge_path,
+            } => {
+                println!(
+                    "Cached edge node - child: {:?}, path: {:?}",
+                    child, edge_path
+                );
 
                 // Remove the path bits
                 for _ in 0..edge_path.len() {
@@ -349,8 +341,11 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
 
                 // Create new edge node
                 let edge_hash = hash_edge_node::<H>(edge_path, child_hash);
-                
-                println!("Created new edge node from cache with hash: {:?}", edge_hash);
+
+                println!(
+                    "Created new edge node from cache with hash: {:?}",
+                    edge_hash
+                );
 
                 // Store new node in cache
                 let new_node = ProofNode::Edge {
@@ -439,14 +434,10 @@ mod tests {
         println!("New key: {:?}", new_key_bv);
         println!("New value: {:?}", new_value);
 
-        let mut partial_trie = PartialTrie::<Pedersen>::new(identifier3.clone().into(), 24, current_root);
+        let mut partial_trie =
+            PartialTrie::<Pedersen>::new(identifier3.clone().into(), 24, current_root);
         let next_root = partial_trie
-            .set::<RocksDB<BasicId>, BasicId>(
-                &new_key_bv,
-                new_value,
-                current_root,
-                proof,
-            )
+            .set::<RocksDB<BasicId>, BasicId>(&new_key_bv, new_value, current_root, proof)
             .unwrap();
 
         // Verify the result
@@ -506,8 +497,7 @@ mod tests {
         bonsai_storage1.commit(id1).unwrap();
         let mut current_root = bonsai_storage1.root_hash(&identifier).unwrap();
 
-        let mut partial_trie =
-            PartialTrie::<Pedersen>::new(identifier3.into(), 24, current_root);
+        let mut partial_trie = PartialTrie::<Pedersen>::new(identifier3.into(), 24, current_root);
         let mut next_roots = Vec::new();
         let mut i = 0;
 
@@ -531,12 +521,7 @@ mod tests {
             println!("Value: {:?}", value);
 
             let next_root = partial_trie
-                .set::<RocksDB<BasicId>, BasicId>(
-                    key,
-                    *value,
-                    current_root,
-                    proof,
-                )
+                .set::<RocksDB<BasicId>, BasicId>(key, *value, current_root, proof)
                 .unwrap();
 
             next_roots.push(next_root);
