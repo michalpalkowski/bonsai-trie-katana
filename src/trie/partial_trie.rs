@@ -1557,6 +1557,15 @@ mod tests {
         println!("---------Path nodes---------");
         println!("{:?}\n", path_nodes);
 
+        partial_trie
+            .build_from_visited_nodes(
+                path_nodes,
+                &keys[1],
+                values[1],
+                &mut bonsai_storage.tries.db,
+            )
+            .unwrap();
+
         // tutaj jak mam partial paht i path nodes to chce zaimplementowac cos takiego jak next root ale zeby działało
         //jak w metodzie set() w tree.rs zeby aktualizowało nodekey w drzewie ale nie w nodes tylko partiaproof_nodesl_nodes po zmianie pathnodes.last()
         //potem jak wyliczy pahtnodes.last() i go zaktualizuje to chce wyliczyc aktualnego root'a, moze uzywajac metody hash_up_recursive

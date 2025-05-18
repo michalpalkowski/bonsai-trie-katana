@@ -143,14 +143,9 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         right: Felt,
         hash: Felt,
     ) -> Result<NodeKey, PartialTrieError> {
-        let binary_node = Node::Binary(BinaryNode {
-            hash: Some(hash),
-            height,
-            left: NodeHandle::Hash(left),
-            right: NodeHandle::Hash(right),
-        });
+        let binary_node = ProofNode::Binary { left, right };
 
-        let node_id = self.nodes.insert(binary_node);
+        let node_id = self.proof_nodes.insert(binary_node); // FIX This
 
         if height == 0 {
             self.root_node = Some(RootHandle::Loaded(node_id));
@@ -167,14 +162,12 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         hash: Felt,
         key: &BitSlice,
     ) -> Result<NodeKey, PartialTrieError> {
-        let edge_node = Node::Edge(EdgeNode {
-            hash: Some(hash),
-            height,
+        let edge_node = ProofNode::Edge {
+            child,
             path: path.clone(),
-            child: NodeHandle::Hash(child),
-        });
+        };
 
-        let node_id = self.nodes.insert(edge_node);
+        let node_id = self.proof_nodes.insert(edge_node); // FIX This
 
         if height == 0 {
             // self.death_row.insert(TrieKey::Trie(bitslice_to_bytes(&key[..height as usize])));
