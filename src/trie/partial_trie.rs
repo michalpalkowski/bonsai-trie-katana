@@ -1520,6 +1520,9 @@ mod tests {
 
         let mut id_builder = BasicIdBuilder::new();
         bonsai_storage.commit(id_builder.new_id()).unwrap();
+        let current_root = bonsai_storage.root_hash(&identifier).unwrap();
+        println!("---------Current root---------");
+        println!("{:?}\n", current_root);
 
         // Get proof for the 4th key
         let tree = bonsai_storage
@@ -1528,22 +1531,40 @@ mod tests {
             .entry(smallvec::smallvec![1])
             .or_insert_with(|| MerkleTree::new(identifier.clone().into(), 24));
 
-        let proof_keys = vec![&keys[3]];
+        let proof_keys = vec![&keys[1]];
 
-        // First get the proof
-        println!("Getting proof...");
         let proof = tree
             .get_multi_proof(&bonsai_storage.tries.db, proof_keys.iter())
             .unwrap();
-        println!("Proof: {:?}", proof);
+        println!("---------Proof---------");
+        println!("{:?}\n", proof);
 
-        // Then get partial path
-        println!("Getting partial path...");
-        let partial_path = tree
-            .get_partial_path(&bonsai_storage.tries.db, proof_keys.iter())
+        let identifier2 = vec![2];
+        let mut partial_trie =
+            PartialTrie::<Pedersen>::new(identifier2.clone().into(), 24, current_root);
+
+        let non_existing_proof_keys = vec![&keys[1]];
+
+        let (partial_path, path_nodes) = partial_trie
+            .trie
+            .get_partial_path(
+                &bonsai_storage.tries.db,
+                non_existing_proof_keys.iter(),
+                proof,
+                current_root,
+            )
             .unwrap();
+        println!("---------Path nodes---------");
+        println!("{:?}\n", path_nodes);
 
-        println!("Partial path: {:?}", partial_path);
+        // tutaj jak mam partial paht i path nodes to chce zaimplementowac cos takiego jak next root ale zeby działało
+        //jak w metodzie set() w tree.rs zeby aktualizowało nodekey w drzewie ale nie w nodes tylko partiaproof_nodesl_nodes po zmianie pathnodes.last()
+        //potem jak wyliczy pahtnodes.last() i go zaktualizuje to chce wyliczyc aktualnego root'a, moze uzywajac metody hash_up_recursive
+        // tylko ją trzeba przebudować zeby aktualizowała/insertowała nodekey w odpowiednim drzewie to znaczy w proof_nodes zamiast poprostu nodes
+        //jak jest teraz w metodach insert_binary_node i insert_edge_node w tree.rs
+
+        println!("---------Partial path---------");
+        println!("{:?}\n", partial_path);
 
         // Analyze the results
         println!("Number of nodes in partial path: {}", partial_path.0.len());

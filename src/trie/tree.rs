@@ -10,7 +10,7 @@ use crate::{
     error::BonsaiStorageError, format, hash_map, id::Id, vec, BitSlice, BonsaiDatabase, ByteVec,
     EncodeExt, HashMap, HashSet, KeyValueDB, ToString, Vec,
 };
-use crate::{BitVec, ProofNode};
+use crate::{BitVec, MultiProof, ProofNode};
 
 use super::iterator::MerkleTreeIterator;
 use super::{
@@ -58,18 +58,6 @@ pub enum ProofNodeChildren {
     Edge {
         child: Option<NodeKey>,
     },
-}
-
-impl ProofNodeChildren {
-    pub fn new(proof_node: &ProofNode) -> Self {
-        match proof_node {
-            ProofNode::Binary { .. } => ProofNodeChildren::Binary {
-                left: None,
-                right: None,
-            },
-            ProofNode::Edge { .. } => ProofNodeChildren::Edge { child: None },
-        }
-    }
 }
 /// A Starknet binary Merkle-Patricia tree with a specific root entry-point and storage.
 ///
@@ -335,6 +323,14 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         db: &'a KeyValueDB<DB, ID>,
     ) -> MerkleTreeIterator<'a, H, DB, ID> {
         MerkleTreeIterator::new(self, db)
+    }
+
+    pub fn iter_partial<'a, DB: BonsaiDatabase, ID: Id>(
+        &'a mut self,
+        db: &'a KeyValueDB<DB, ID>,
+        proof: MultiProof,
+    ) -> MerkleTreeIterator<'a, H, DB, ID> {
+        MerkleTreeIterator::new_with_proof(self, db, proof)
     }
 
     /// # Panics

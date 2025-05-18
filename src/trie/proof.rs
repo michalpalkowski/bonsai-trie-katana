@@ -230,8 +230,11 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         &mut self,
         db: &KeyValueDB<DB, ID>,
         keys: impl IntoIterator<Item = impl AsRef<BitSlice>>,
-    ) -> Result<PartialPath, BonsaiStorageError<DB::DatabaseError>> {
+        full_proof: MultiProof,
+        root: Felt,
+    ) -> Result<(PartialPath, Vec<(NodeKey, usize)>), BonsaiStorageError<DB::DatabaseError>> {
         let max_height = self.max_height;
+        let keys: Vec<_> = keys.into_iter().collect();
 
         struct PartialTrieVisitor<H>(PartialPath, PhantomData<H>);
         impl<H: StarkHash + Send + Sync> PartialNodeVisitor<H> for PartialTrieVisitor<H> {
@@ -241,19 +244,17 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                 node_id: NodeKey,
                 _prev_height: usize,
             ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
-                println!("AAAAAAAAaa");
                 let (proof_node, children) = tree.get_proof_node_mut::<DB>(node_id)?;
-                // Clone the node and children before inserting to avoid any potential issues with references
-                println!("AAAAAAAAaa");
                 self.0
                      .0
                     .insert(node_id, (proof_node.clone(), children.clone()));
                 Ok(())
             }
         }
-        let mut visitor = PartialTrieVisitor::<H>(PartialPath(Default::default()), PhantomData);
 
-        let mut iter = self.iter(db);
+        let mut visitor = PartialTrieVisitor::<H>(PartialPath(HashMap::new()), PhantomData);
+        let mut iter = self.iter_partial(db, full_proof);
+
         for key in keys {
             let key = key.as_ref();
             if key.len() != max_height as usize {
@@ -262,11 +263,10 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                     got: key.len(),
                 });
             }
-            println!("GOING TO TRAVERSE");
-            iter.traverse_to_partial(&mut visitor, key)?;
+            iter.traverse_to_partial(&mut visitor, key, root)?;
         }
-
-        Ok(visitor.0)
+        let path_nodes = iter.current_partial_nodes_heights;
+        Ok((visitor.0, path_nodes))
     }
 
     /// Calculates the next root hash after updating a value.
