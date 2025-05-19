@@ -42,7 +42,7 @@ pub trait PartialNodeVisitor<H: StarkHash> {
     ) -> Result<(), BonsaiStorageError<DB::DatabaseError>>;
 }
 
-pub struct NoopPartialVisitor<H>(PhantomData<H>);
+pub struct NoopPartialVisitor<H>(pub PhantomData<H>);
 impl<H: StarkHash> PartialNodeVisitor<H> for NoopPartialVisitor<H> {
     fn visit_partial_node<DB: BonsaiDatabase>(
         &mut self,
@@ -396,39 +396,55 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
             return Ok(None); // koniec przechodzenia
         }
 
-        let proof_clone = self.proof.clone().unwrap().0.clone();
-        // Pobierz węzeł z proofa dla tego hashu
-        let Some(new_proof_node) = proof_clone.get(child) else {
-            self.leaf_hash = None;
-            return Ok(None);
-        };
-
-        // Utwórz nowy węzeł z odpowiednim typem children
-        let child_type = self.tree.get_child_type(&new_proof_node, &proof_clone);
-        let new_node_id = self
-            .tree
-            .proof_nodes
-            .insert((new_proof_node.clone(), child_type));
-
-        // Update children reference in parent node
-        let (_, children) = self.tree.get_proof_node_mut::<DB>(node_id)?;
-        match children {
+        let next_node_id = match children {
             ProofNodeChildren::Binary { left, right } => {
                 let next_direction = Direction::from(key[self.current_path.len()]);
                 match next_direction {
-                    Direction::Left => *left = Some(new_node_id),
-                    Direction::Right => *right = Some(new_node_id),
+                    Direction::Left => left,
+                    Direction::Right => right,
                 }
             }
-            ProofNodeChildren::Edge { child } => {
-                *child = Some(new_node_id);
-            }
-            ProofNodeChildren::None => {
-                println!("No children found - think about it");
-            }
-        }
+            ProofNodeChildren::Edge { child } => child,
+            ProofNodeChildren::None => &mut None,
+        };
 
-        Ok(Some(new_node_id))
+        if let Some(existing_node_id) = next_node_id {
+            Ok(Some(*existing_node_id))
+        } else {
+            //HERE IS THE POINT WHERE WE NEED TO GET THE REST OF THE NODES FROM FULL PROOF
+            let proof_clone = self.proof.clone().unwrap().0.clone();
+            // Pobierz węzeł z proofa dla tego hashu
+            let Some(new_proof_node) = proof_clone.get(child) else {
+                self.leaf_hash = None;
+                return Ok(None);
+            };
+
+            // Utwórz nowy węzeł z odpowiednim typem children
+            let child_type = self.tree.get_child_type(&new_proof_node, &proof_clone);
+            let new_node_id = self
+                .tree
+                .proof_nodes
+                .insert((new_proof_node.clone(), child_type));
+
+            // Update children reference in parent node
+            let (_, children) = self.tree.get_proof_node_mut::<DB>(node_id)?;
+            match children {
+                ProofNodeChildren::Binary { left, right } => {
+                    let next_direction = Direction::from(key[self.current_path.len()]);
+                    match next_direction {
+                        Direction::Left => *left = Some(new_node_id),
+                        Direction::Right => *right = Some(new_node_id),
+                    }
+                }
+                ProofNodeChildren::Edge { child } => {
+                    *child = Some(new_node_id);
+                }
+                ProofNodeChildren::None => {
+                    println!("No children found - think about it");
+                }
+            }
+            Ok(Some(new_node_id))
+        }
     }
 
     pub fn traverse_to_partial<V: PartialNodeVisitor<H>>(
@@ -466,32 +482,40 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
                 visitor.visit_partial_node::<DB>(self.tree, node_id, height)?;
                 self.traverse_one_partial(node_id, height, key)?
             } else {
-                // Start from tree root.
-                self.current_path.clear();
+                // If we have already consstructed partial trie then we have node key for current root
+                //But its only one try because it should be updated
+                if let Some(root_node_id) = self.tree.current_root_node_id {
+                    visitor.visit_partial_node::<DB>(self.tree, root_node_id, 0)?;
+                    Some(root_node_id)
+                } else {
+                    // Start from tree root.
+                    self.current_path.clear();
 
-                // Get root hash from proof
-                let proof_clone = self.proof.clone().unwrap().0.clone();
-                println!("Proof nodes: {:?}", proof_clone);
+                    // Get root hash from proof
+                    let proof_clone = self.proof.clone().unwrap().0.clone();
+                    println!("Proof nodes: {:?}", proof_clone);
 
-                // Get root node from proof by its hash
-                let Some(root_node) = proof_clone.get(&root) else {
-                    println!("No root node in proof");
-                    self.leaf_hash = None;
-                    return Ok(());
-                };
-                println!("Found root node in proof: {:?}", root_node);
+                    // Get root node from proof by its hash
+                    let Some(root_node) = proof_clone.get(&root) else {
+                        println!("No root node in proof");
+                        self.leaf_hash = None;
+                        return Ok(());
+                    };
+                    println!("Found root node in proof: {:?}", root_node);
 
-                // Create proof node in tree
-                let root_node_clone = root_node.clone();
-                let root_children = self.tree.get_child_type(root_node, &proof_clone);
-                let root_node_id = self
-                    .tree
-                    .proof_nodes
-                    .insert((root_node_clone, root_children));
-                println!("Created root node in tree: {:?}", root_node_id);
+                    // Create proof node in tree
+                    let root_node_clone = root_node.clone();
+                    let root_children = self.tree.get_child_type(root_node, &proof_clone);
+                    let root_node_id = self
+                        .tree
+                        .proof_nodes
+                        .insert((root_node_clone, root_children));
+                    println!("Created root node in tree: {:?}", root_node_id);
+                    self.tree.current_root_node_id = Some(root_node_id);
 
-                visitor.visit_partial_node::<DB>(self.tree, root_node_id, 0)?;
-                Some(root_node_id)
+                    visitor.visit_partial_node::<DB>(self.tree, root_node_id, 0)?;
+                    Some(root_node_id)
+                }
             };
 
         log::trace!(
