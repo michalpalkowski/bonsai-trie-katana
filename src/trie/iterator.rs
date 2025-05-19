@@ -274,81 +274,84 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         }
     }
 
-    fn get_child_type(
-        &mut self,
-        proof_node: &ProofNode,
-        proof: &hashbrown::HashMap<Felt, ProofNode>,
-    ) -> ProofNodeChildren {
-        match proof_node {
-            ProofNode::Binary { left, right } => {
-                // Utwórz węzeł dla lewego dziecka
-                let left_node_id = if let Some(left_node) = proof.get(left) {
-                    let left_children = match left_node {
-                        ProofNode::Binary { .. } => ProofNodeChildren::Binary {
-                            left: None,
-                            right: None,
-                        },
-                        ProofNode::Edge { .. } => ProofNodeChildren::Edge { child: None },
-                    };
-                    Some(
-                        self.tree
-                            .proof_nodes
-                            .insert((left_node.clone(), left_children)),
-                    )
-                } else {
-                    None
-                };
+    //TODO!
+    //CHAT MADE THIS FUNCTION - I NEED TO CHECK IF IT IS CORRECT
 
-                // Utwórz węzeł dla prawego dziecka
-                let right_node_id = if let Some(right_node) = proof.get(right) {
-                    let right_children = match right_node {
-                        ProofNode::Binary { .. } => ProofNodeChildren::Binary {
-                            left: None,
-                            right: None,
-                        },
-                        ProofNode::Edge { .. } => ProofNodeChildren::Edge { child: None },
-                    };
-                    Some(
-                        self.tree
-                            .proof_nodes
-                            .insert((right_node.clone(), right_children)),
-                    )
-                } else {
-                    None
-                };
+    // pub fn get_child_type(
+    //     &mut self,
+    //     proof_node: &ProofNode,
+    //     proof: &hashbrown::HashMap<Felt, ProofNode>,
+    // ) -> ProofNodeChildren {
+    //     match proof_node {
+    //         ProofNode::Binary { left, right } => {
+    //             // Utwórz węzeł dla lewego dziecka
+    //             let left_node_id = if let Some(left_node) = proof.get(left) {
+    //                 let left_children = match left_node {
+    //                     ProofNode::Binary { .. } => ProofNodeChildren::Binary {
+    //                         left: None,
+    //                         right: None,
+    //                     },
+    //                     ProofNode::Edge { .. } => ProofNodeChildren::Edge { child: None },
+    //                 };
+    //                 Some(
+    //                     self.tree
+    //                         .proof_nodes
+    //                         .insert((left_node.clone(), left_children)),
+    //                 )
+    //             } else {
+    //                 None
+    //             };
 
-                ProofNodeChildren::Binary {
-                    left: left_node_id,
-                    right: right_node_id,
-                }
-            }
-            ProofNode::Edge {
-                child: child_hash, ..
-            } => {
-                // Utwórz węzeł dla dziecka
-                let child_node_id = if let Some(child_node) = proof.get(child_hash) {
-                    let child_children = match child_node {
-                        ProofNode::Binary { .. } => ProofNodeChildren::Binary {
-                            left: None,
-                            right: None,
-                        },
-                        ProofNode::Edge { .. } => ProofNodeChildren::Edge { child: None },
-                    };
-                    Some(
-                        self.tree
-                            .proof_nodes
-                            .insert((child_node.clone(), child_children)),
-                    )
-                } else {
-                    None
-                };
+    //             // Utwórz węzeł dla prawego dziecka
+    //             let right_node_id = if let Some(right_node) = proof.get(right) {
+    //                 let right_children = match right_node {
+    //                     ProofNode::Binary { .. } => ProofNodeChildren::Binary {
+    //                         left: None,
+    //                         right: None,
+    //                     },
+    //                     ProofNode::Edge { .. } => ProofNodeChildren::Edge { child: None },
+    //                 };
+    //                 Some(
+    //                     self.tree
+    //                         .proof_nodes
+    //                         .insert((right_node.clone(), right_children)),
+    //                 )
+    //             } else {
+    //                 None
+    //             };
 
-                ProofNodeChildren::Edge {
-                    child: child_node_id,
-                }
-            }
-        }
-    }
+    //             ProofNodeChildren::Binary {
+    //                 left: left_node_id,
+    //                 right: right_node_id,
+    //             }
+    //         }
+    //         ProofNode::Edge {
+    //             child: child_hash, ..
+    //         } => {
+    //             // Utwórz węzeł dla dziecka
+    //             let child_node_id = if let Some(child_node) = proof.get(child_hash) {
+    //                 let child_children = match child_node {
+    //                     ProofNode::Binary { .. } => ProofNodeChildren::Binary {
+    //                         left: None,
+    //                         right: None,
+    //                     },
+    //                     ProofNode::Edge { .. } => ProofNodeChildren::Edge { child: None },
+    //                 };
+    //                 Some(
+    //                     self.tree
+    //                         .proof_nodes
+    //                         .insert((child_node.clone(), child_children)),
+    //                 )
+    //             } else {
+    //                 None
+    //             };
+
+    //             ProofNodeChildren::Edge {
+    //                 child: child_node_id,
+    //             }
+    //         }
+    //     }
+    // }
 
     fn traverse_one_partial(
         &mut self,
@@ -401,7 +404,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         };
 
         // Utwórz nowy węzeł z odpowiednim typem children
-        let child_type = self.get_child_type(&new_proof_node, &proof_clone);
+        let child_type = self.tree.get_child_type(&new_proof_node, &proof_clone);
         let new_node_id = self
             .tree
             .proof_nodes
@@ -419,6 +422,9 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
             }
             ProofNodeChildren::Edge { child } => {
                 *child = Some(new_node_id);
+            }
+            ProofNodeChildren::None => {
+                println!("No children found - think about it");
             }
         }
 
@@ -477,7 +483,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
 
                 // Create proof node in tree
                 let root_node_clone = root_node.clone();
-                let root_children = self.get_child_type(root_node, &proof_clone);
+                let root_children = self.tree.get_child_type(root_node, &proof_clone);
                 let root_node_id = self
                     .tree
                     .proof_nodes

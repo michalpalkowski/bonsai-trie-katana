@@ -58,6 +58,7 @@ pub enum ProofNodeChildren {
     Edge {
         child: Option<NodeKey>,
     },
+    None,
 }
 /// A Starknet binary Merkle-Patricia tree with a specific root entry-point and storage.
 ///
@@ -138,14 +139,26 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
 
     pub fn insert_binary_node(
         &mut self,
-        height: u64,
+        height: usize,
         left: Felt,
         right: Felt,
-        hash: Felt,
+        left_child_key: Option<NodeKey>,
+        right_child_key: Option<NodeKey>,
     ) -> Result<NodeKey, PartialTrieError> {
         let binary_node = ProofNode::Binary { left, right };
 
-        let node_id = self.proof_nodes.insert(binary_node); // FIX This
+        let child_type = match (left_child_key, right_child_key) {
+            (Some(left), Some(right)) => ProofNodeChildren::Binary {
+                left: Some(left),
+                right: Some(right),
+            },
+            (Some(child), None) | (None, Some(child)) => ProofNodeChildren::Edge {
+                child: Some(child),
+            },
+            (None, None) => ProofNodeChildren::None,
+        };
+
+        let node_id = self.proof_nodes.insert((binary_node, child_type)); 
 
         if height == 0 {
             self.root_node = Some(RootHandle::Loaded(node_id));
@@ -154,6 +167,8 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         Ok(node_id)
     }
 
+    /// THIS FUNCTION SHOULD BE ONLY USED WHEN INSERTING THE ROOT NODE
+    /// AS IT DOES NOT HAVE CHILDREN INTEGRATED YET
     pub fn insert_edge_node(
         &mut self,
         height: u64,
@@ -162,20 +177,18 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         hash: Felt,
         key: &BitSlice,
     ) -> Result<NodeKey, PartialTrieError> {
+        // THIS FUNCTION IS ONLY USED WHEN INSERTING THE ROOT NODE
         let edge_node = ProofNode::Edge {
             child,
             path: path.clone(),
         };
-
-        let node_id = self.proof_nodes.insert(edge_node); // FIX This
+        //THATS WRONG - children should be inserted and then filled with the correct value
+        let child_type = ProofNodeChildren::None;
+        let node_id = self.proof_nodes.insert((edge_node, child_type));
 
         if height == 0 {
-            // self.death_row.insert(TrieKey::Trie(bitslice_to_bytes(&key[..height as usize])));
             self.root_node = Some(RootHandle::Loaded(node_id));
         }
-
-        // let key_bytes = bitslice_to_bytes(&key[..height as usize]);
-        // self.death_row.insert(TrieKey::Trie(key_bytes));
 
         Ok(node_id)
     }
@@ -203,6 +216,78 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                         self.root_node = Some(RootHandle::Empty);
                         Ok(None)
                     }
+                }
+            }
+        }
+    }
+
+    //TODO!
+    //CHAT MADE THIS FUNCTION - I NEED TO CHECK IF IT IS CORRECT
+    pub fn get_child_type(
+        &mut self,
+        proof_node: &ProofNode,
+        proof: &hashbrown::HashMap<Felt, ProofNode>,
+    ) -> ProofNodeChildren {
+        match proof_node {
+            ProofNode::Binary { left, right } => {
+                // Utwórz węzeł dla lewego dziecka
+                let left_node_id = if let Some(left_node) = proof.get(left) {
+                    let left_children = match left_node {
+                        ProofNode::Binary { .. } => ProofNodeChildren::Binary {
+                            left: None,
+                            right: None,
+                        },
+                        ProofNode::Edge { .. } => ProofNodeChildren::Edge { child: None },
+                    };
+                    Some(self.proof_nodes.insert((left_node.clone(), left_children)))
+                } else {
+                    None
+                };
+
+                // Utwórz węzeł dla prawego dziecka
+                let right_node_id = if let Some(right_node) = proof.get(right) {
+                    let right_children = match right_node {
+                        ProofNode::Binary { .. } => ProofNodeChildren::Binary {
+                            left: None,
+                            right: None,
+                        },
+                        ProofNode::Edge { .. } => ProofNodeChildren::Edge { child: None },
+                    };
+                    Some(
+                        self.proof_nodes
+                            .insert((right_node.clone(), right_children)),
+                    )
+                } else {
+                    None
+                };
+
+                ProofNodeChildren::Binary {
+                    left: left_node_id,
+                    right: right_node_id,
+                }
+            }
+            ProofNode::Edge {
+                child: child_hash, ..
+            } => {
+                // Utwórz węzeł dla dziecka
+                let child_node_id = if let Some(child_node) = proof.get(child_hash) {
+                    let child_children = match child_node {
+                        ProofNode::Binary { .. } => ProofNodeChildren::Binary {
+                            left: None,
+                            right: None,
+                        },
+                        ProofNode::Edge { .. } => ProofNodeChildren::Edge { child: None },
+                    };
+                    Some(
+                        self.proof_nodes
+                            .insert((child_node.clone(), child_children)),
+                    )
+                } else {
+                    None
+                };
+
+                ProofNodeChildren::Edge {
+                    child: child_node_id,
                 }
             }
         }
