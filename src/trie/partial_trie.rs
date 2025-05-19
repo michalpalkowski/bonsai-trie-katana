@@ -72,7 +72,6 @@ impl<H: StarkHash> NextRootVisitor<H> for FullTrieVisitor<H> {
     ) -> Result<VisitResult, PartialTrieError> {
         let height = self.current_path.len();
 
-
         if height >= path.len() {
             return Ok(VisitResult::Break);
         }
@@ -172,18 +171,26 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         }
     }
 
-    fn create_split(&mut self, path: &Path, child: Felt, key: &BitSlice, value: Felt, common: &BitSlice, height: usize) -> PathSplit<H> {
-        PathSplit::from_edge_and_key(
-            path,
-            child,
-            key,
-            value,
-            common,
-            height,
-        )
+    fn create_split(
+        &mut self,
+        path: &Path,
+        child: Felt,
+        key: &BitSlice,
+        value: Felt,
+        common: &BitSlice,
+        height: usize,
+    ) -> PathSplit<H> {
+        PathSplit::from_edge_and_key(path, child, key, value, common, height)
     }
 
-    fn create_binary_node(&mut self, branch_height: usize, new_value: Felt, old_value: Felt, left_child_key: Option<NodeKey>, right_child_key: Option<NodeKey>) -> Result<NodeKey, PartialTrieError> {
+    fn create_binary_node(
+        &mut self,
+        branch_height: usize,
+        new_value: Felt,
+        old_value: Felt,
+        left_child_key: Option<NodeKey>,
+        right_child_key: Option<NodeKey>,
+    ) -> Result<NodeKey, PartialTrieError> {
         self.trie.insert_binary_node(
             branch_height,
             new_value,
@@ -195,7 +202,9 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
 
     fn update_cache(&mut self, key: &BitSlice, value: Felt) {
         let key_bytes = bitslice_to_bytes(key);
-        self.trie.cache_leaf_modified.insert(key_bytes, InsertOrRemove::Insert(value));
+        self.trie
+            .cache_leaf_modified
+            .insert(key_bytes, InsertOrRemove::Insert(value));
     }
 
     // pub fn next_root<DB: BonsaiDatabase, ID: Id>(
@@ -480,7 +489,8 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 //     common,
                 //     height as usize,
                 // );
-                let mut split = self.create_split(path, *child, key, value, common, height as usize);
+                let mut split =
+                    self.create_split(path, *child, key, value, common, height as usize);
 
                 //This needs to be uncommented and resolved when db is implemented
                 // self.update_cache(key, value);
@@ -488,11 +498,12 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 //HERE in create_binary_node_hash we neeed to update corret PROOF NODES TODO!
 
                 //edge key 1 is left child of binary node
-                //edge key 2 is right child of binary node 
+                //edge key 2 is right child of binary node
                 // But i need to think about it if its correct TODO!
-                let (binary_node_hash, binary_node, edge_key1, edge_key2) = split.create_binary_node_hash(&mut self.trie);
+                let (binary_node_hash, binary_node, edge_key1, edge_key2) =
+                    split.create_binary_node_hash(&mut self.trie);
 
-                let (current_hash, new_node, edge_key1, edge_key2)  = if common.is_empty() {
+                let (current_hash, new_node, edge_key1, edge_key2) = if common.is_empty() {
                     //here we dont want to create new node but we want to update the old one as in set() tree.rs
                     //read below for more details
 
@@ -533,15 +544,14 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                         left: Some(left),
                         right: Some(right),
                     },
-                    (Some(child), None) | (None, Some(child)) => ProofNodeChildren::Edge {
-                        child: Some(child),
-                    },
-                    (None, None) 
-                    => ProofNodeChildren::None,
+                    (Some(child), None) | (None, Some(child)) => {
+                        ProofNodeChildren::Edge { child: Some(child) }
+                    }
+                    (None, None) => ProofNodeChildren::None,
                 };
                 //i want to return children - > if both then binary else edge with one else None
 
-                //these are the children of higher edge node so it should be inserted binary node 
+                //these are the children of higher edge node so it should be inserted binary node
                 //or if there is no higher edge node then childs should be egde nodes inserted
                 //under binary node else there are leafs so children should be None as we do not insert them as nodes
                 children = new_children;
@@ -567,30 +577,36 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                         Direction::Left => {
                             let binary_node = hash_binary_node::<H>(value, *right);
                             let node_id = self.create_binary_node(
-                                height,
-                                value,
-                                *right,
+                                height, value, *right,
                                 None, // lewe dziecko to wartość, więc nie ma węzła
                                 None, // prawe dziecko to istniejąca wartość, więc nie ma węzła
                             )?;
-                            (binary_node, 
-                             ProofNode::Binary { left: value, right: *right },
-                             None::<NodeKey>,
-                             None::<NodeKey>)
+                            (
+                                binary_node,
+                                ProofNode::Binary {
+                                    left: value,
+                                    right: *right,
+                                },
+                                None::<NodeKey>,
+                                None::<NodeKey>,
+                            )
                         }
                         Direction::Right => {
                             let binary_node = hash_binary_node::<H>(*left, value);
                             let node_id = self.create_binary_node(
-                                height,
-                                *left,
-                                value,
+                                height, *left, value,
                                 None, // lewe dziecko to istniejąca wartość, więc nie ma węzła
                                 None, // prawe dziecko to wartość, więc nie ma węzła
                             )?;
-                            (binary_node,
-                             ProofNode::Binary { left: *left, right: value },
-                             None::<NodeKey>,
-                             None::<NodeKey>)
+                            (
+                                binary_node,
+                                ProofNode::Binary {
+                                    left: *left,
+                                    right: value,
+                                },
+                                None::<NodeKey>,
+                                None::<NodeKey>,
+                            )
                         }
                     };
 
@@ -626,14 +642,17 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         println!("Initial current_hash: {:?}", current_hash);
 
         println!("nodes before skipping: {:?}", path_nodes);
-        let mut nodes = path_nodes.iter()
-            .rev()
-            .skip(if skip_last { 1 } else { 0 });
-    
+        let mut nodes = path_nodes.iter().rev().skip(if skip_last { 1 } else { 0 });
+
         self.hash_up_recursive(key, current_hash, &mut nodes)
     }
 
-    fn hash_up_recursive<'a, I>(&mut self, key: &BitSlice, current_hash: Felt, nodes: &mut I) -> Felt
+    fn hash_up_recursive<'a, I>(
+        &mut self,
+        key: &BitSlice,
+        current_hash: Felt,
+        nodes: &mut I,
+    ) -> Felt
     where
         I: Iterator<Item = &'a (NodeKey, usize)>,
     {
@@ -696,7 +715,10 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 }
             }
         } else {
-            println!("No more nodes to process, returning current_hash: {:?}", current_hash);
+            println!(
+                "No more nodes to process, returning current_hash: {:?}",
+                current_hash
+            );
             current_hash
         }
     }
@@ -918,7 +940,10 @@ impl<H: StarkHash> PathSplit<H> {
         }
     }
 
-    fn create_binary_node_hash(&mut self, tree: &mut MerkleTree<H>) -> (Felt, ProofNode, Option<NodeKey>, Option<NodeKey>) {
+    fn create_binary_node_hash(
+        &mut self,
+        tree: &mut MerkleTree<H>,
+    ) -> (Felt, ProofNode, Option<NodeKey>, Option<NodeKey>) {
         let (new_hash, new_id) = if self.new_branch.path.is_empty() {
             (self.new_branch.value, None)
         } else {
@@ -1122,6 +1147,7 @@ mod tests {
         let db = create_rocks_db(tempfile::tempdir().unwrap().path()).unwrap();
         let identifier1 = vec![1];
         let identifier2 = vec![2];
+        let identifier3 = vec![3];
 
         let config = BonsaiStorageConfig::default();
         let mut bonsai_storage1: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
@@ -1131,6 +1157,12 @@ mod tests {
                 height,
             );
         let mut bonsai_storage2: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
+            BonsaiStorage::new(
+                RocksDB::new(&db, RocksDBConfig::default()),
+                config.clone(),
+                height,
+            );
+        let mut bonsai_storage3: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
             BonsaiStorage::new(
                 RocksDB::new(&db, RocksDBConfig::default()),
                 config.clone(),
@@ -1161,37 +1193,52 @@ mod tests {
             .unwrap();
 
         let mut partial_trie =
-            PartialTrie::<Pedersen>::new(identifier1.into(), height, current_root);
-        // let next_root = partial_trie
-        //     .next_root::<RocksDB<BasicId>, BasicId>(
-        //         &new_key,
-        //         new_value,
-        //         current_root,
-        //         proof,
-        //         &mut bonsai_storage1.tries.db,
-        //     )
-        //     .unwrap();
+            PartialTrie::<Pedersen>::new(identifier3.clone().into(), height, current_root);
 
-        // let id2 = id_builder.new_id();
-        // bonsai_storage2.commit(id2).unwrap();
-        // let root2 = bonsai_storage2.root_hash(&identifier2).unwrap();
-        // assert_eq!(
-        //     current_root, root2,
-        //     "Roots should be equal after initial commit"
-        // );
+        let (partial_path, path_nodes) = partial_trie
+            .trie
+            .get_partial_path(
+                &bonsai_storage3.tries.db,
+                proof_keys.iter(),
+                proof,
+                current_root,
+            )
+            .unwrap();
+        println!("Partial path: {:?}\n", partial_path);
 
-        // bonsai_storage2
-        //     .insert(&identifier2, &new_key, &new_value)
-        //     .unwrap();
-        // bonsai_storage2.commit(id_builder.new_id()).unwrap();
+        let calculated_root = partial_trie
+            .build_from_visited_nodes(
+                path_nodes,
+                &new_key,
+                new_value,
+                &mut bonsai_storage1.tries.db,
+            )
+            .unwrap();
+        println!("Calculated root: {:?}", calculated_root);
 
-        // let actual_root = bonsai_storage2.root_hash(&identifier2).unwrap();
+        // Commit initial state of storage2
+        let id2 = id_builder.new_id();
+        bonsai_storage2.commit(id2).unwrap();
+        println!(
+            "Initial storage2 root: {:?}",
+            bonsai_storage2.root_hash(&identifier2).unwrap()
+        );
 
-        // assert_eq!(
-        //     next_root, actual_root,
-        //     "Next root calculation failed: next_root: {:?}, actual_root: {:?}",
-        //     next_root, actual_root
-        // );
+        // Insert new value and commit
+        bonsai_storage2
+            .insert(&identifier2, &new_key, &new_value)
+            .unwrap();
+
+        let id3 = id_builder.new_id();
+        bonsai_storage2.commit(id3).unwrap();
+        let expected_root = bonsai_storage2.root_hash(&identifier2).unwrap();
+        println!("Final expected root: {:?}", expected_root);
+
+        assert_eq!(
+            calculated_root, expected_root,
+            "Roots don't match: calculated={:?}, expected={:?}",
+            calculated_root, expected_root
+        );
     }
 
     #[test]
@@ -1284,6 +1331,12 @@ mod tests {
                 config.clone(),
                 24,
             );
+        let mut bonsai_storage3: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
+            BonsaiStorage::new(
+                RocksDB::new(&db, RocksDBConfig::default()),
+                config.clone(),
+                24,
+            );
 
         let mut id_builder = BasicIdBuilder::new();
 
@@ -1322,26 +1375,51 @@ mod tests {
         let partial_trie_identifier = vec![3];
         let mut partial_trie =
             PartialTrie::<Pedersen>::new(partial_trie_identifier.into(), 24, current_root);
-        // let next_root = partial_trie
-        //     .next_root::<RocksDB<BasicId>, BasicId>(
-        //         &new_key_bv,
-        //         new_value,
-        //         current_root,
-        //         proof,
-        //         &mut bonsai_storage1.tries.db,
-        //     )
-        //     .unwrap();
 
-        // let id2 = id_builder.new_id();
-        // bonsai_storage2.commit(id2).unwrap();
-        // bonsai_storage2
-        //     .insert(&identifier2, &new_key_bv, &new_value)
-        //     .unwrap();
-        // bonsai_storage2.commit(id_builder.new_id()).unwrap();
+        let (partial_path, path_nodes) = partial_trie
+            .trie
+            .get_partial_path(
+                &bonsai_storage3.tries.db,
+                proof_keys.iter(),
+                proof,
+                current_root,
+            )
+            .unwrap();
+        println!("Partial path: {:?}\n", partial_path);
 
-        // let actual_root = bonsai_storage2.root_hash(&identifier2).unwrap();
+        let calculated_root = partial_trie
+            .build_from_visited_nodes(
+                path_nodes,
+                &new_key_bv,
+                new_value,
+                &mut bonsai_storage1.tries.db,
+            )
+            .unwrap();
+        println!("Calculated root: {:?}", calculated_root);
 
-        // assert_eq!(next_root, actual_root, "Next root calculation failed");
+        // Commit initial state of storage2
+        let id2 = id_builder.new_id();
+        bonsai_storage2.commit(id2).unwrap();
+        println!(
+            "Initial storage2 root: {:?}",
+            bonsai_storage2.root_hash(&identifier2).unwrap()
+        );
+
+        // Insert new value and commit
+        bonsai_storage2
+            .insert(&identifier2, &new_key_bv, &new_value)
+            .unwrap();
+
+        let id3 = id_builder.new_id();
+        bonsai_storage2.commit(id3).unwrap();
+        let expected_root = bonsai_storage2.root_hash(&identifier2).unwrap();
+        println!("Final expected root: {:?}", expected_root);
+
+        assert_eq!(
+            calculated_root, expected_root,
+            "Roots don't match: calculated={:?}, expected={:?}",
+            calculated_root, expected_root
+        );
     }
 
     #[test]
@@ -1582,7 +1660,7 @@ mod tests {
         let identifier2 = vec![2];
         let identifier3 = vec![3];
         let config = BonsaiStorageConfig::default();
-        
+
         let mut bonsai_storage1: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
             BonsaiStorage::new(
                 RocksDB::new(&db, RocksDBConfig::default()),
@@ -1609,9 +1687,13 @@ mod tests {
             key[0] = i;
             let value = Felt::from(i as u64 + 100);
             let key_bv = BitVec::from_vec(key.clone());
-            
-            bonsai_storage1.insert(&identifier, &key_bv, &value).unwrap();
-            bonsai_storage2.insert(&identifier2, &key_bv, &value).unwrap();
+
+            bonsai_storage1
+                .insert(&identifier, &key_bv, &value)
+                .unwrap();
+            bonsai_storage2
+                .insert(&identifier2, &key_bv, &value)
+                .unwrap();
         }
 
         let id1 = id_builder.new_id();
@@ -1637,7 +1719,8 @@ mod tests {
         println!("_________________________");
         println!("FULL PROOF: {:?}\n", proof);
 
-        let mut partial_trie = PartialTrie::<Pedersen>::new(identifier3.clone().into(), 24, current_root);
+        let mut partial_trie =
+            PartialTrie::<Pedersen>::new(identifier3.clone().into(), 24, current_root);
 
         let (partial_path, path_nodes) = partial_trie
             .trie
@@ -1663,21 +1746,24 @@ mod tests {
         // Commit initial state of storage2
         let id2 = id_builder.new_id();
         bonsai_storage2.commit(id2).unwrap();
-        println!("Initial storage2 root: {:?}", bonsai_storage2.root_hash(&identifier2).unwrap());
+        println!(
+            "Initial storage2 root: {:?}",
+            bonsai_storage2.root_hash(&identifier2).unwrap()
+        );
 
         // Insert new value and commit
-        bonsai_storage2.insert(&identifier2, &new_key_bv, &new_value).unwrap();
+        bonsai_storage2
+            .insert(&identifier2, &new_key_bv, &new_value)
+            .unwrap();
         let id3 = id_builder.new_id();
         bonsai_storage2.commit(id3).unwrap();
         let expected_root = bonsai_storage2.root_hash(&identifier2).unwrap();
         println!("Final expected root: {:?}", expected_root);
 
         assert_eq!(
-            calculated_root, 
-            expected_root,
+            calculated_root, expected_root,
             "Roots don't match: calculated={:?}, expected={:?}",
-            calculated_root,
-            expected_root
+            calculated_root, expected_root
         );
     }
 }

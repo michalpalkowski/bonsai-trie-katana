@@ -152,13 +152,13 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                 left: Some(left),
                 right: Some(right),
             },
-            (Some(child), None) | (None, Some(child)) => ProofNodeChildren::Edge {
-                child: Some(child),
-            },
+            (Some(child), None) | (None, Some(child)) => {
+                ProofNodeChildren::Edge { child: Some(child) }
+            }
             (None, None) => ProofNodeChildren::None,
         };
 
-        let node_id = self.proof_nodes.insert((binary_node, child_type)); 
+        let node_id = self.proof_nodes.insert((binary_node, child_type));
 
         if height == 0 {
             self.root_node = Some(RootHandle::Loaded(node_id));
