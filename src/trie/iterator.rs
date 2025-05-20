@@ -281,85 +281,6 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         }
     }
 
-    //TODO!
-    //CHAT MADE THIS FUNCTION - I NEED TO CHECK IF IT IS CORRECT
-
-    // pub fn get_child_type(
-    //     &mut self,
-    //     proof_node: &ProofNode,
-    //     proof: &hashbrown::HashMap<Felt, ProofNode>,
-    // ) -> ProofNodeChildren {
-    //     match proof_node {
-    //         ProofNode::Binary { left, right } => {
-    //             // Utwórz węzeł dla lewego dziecka
-    //             let left_node_id = if let Some(left_node) = proof.get(left) {
-    //                 let left_children = match left_node {
-    //                     ProofNode::Binary { .. } => ProofNodeChildren::Binary {
-    //                         left: None,
-    //                         right: None,
-    //                     },
-    //                     ProofNode::Edge { .. } => ProofNodeChildren::Edge { child: None },
-    //                 };
-    //                 Some(
-    //                     self.tree
-    //                         .proof_nodes
-    //                         .insert((left_node.clone(), left_children)),
-    //                 )
-    //             } else {
-    //                 None
-    //             };
-
-    //             // Utwórz węzeł dla prawego dziecka
-    //             let right_node_id = if let Some(right_node) = proof.get(right) {
-    //                 let right_children = match right_node {
-    //                     ProofNode::Binary { .. } => ProofNodeChildren::Binary {
-    //                         left: None,
-    //                         right: None,
-    //                     },
-    //                     ProofNode::Edge { .. } => ProofNodeChildren::Edge { child: None },
-    //                 };
-    //                 Some(
-    //                     self.tree
-    //                         .proof_nodes
-    //                         .insert((right_node.clone(), right_children)),
-    //                 )
-    //             } else {
-    //                 None
-    //             };
-
-    //             ProofNodeChildren::Binary {
-    //                 left: left_node_id,
-    //                 right: right_node_id,
-    //             }
-    //         }
-    //         ProofNode::Edge {
-    //             child: child_hash, ..
-    //         } => {
-    //             // Utwórz węzeł dla dziecka
-    //             let child_node_id = if let Some(child_node) = proof.get(child_hash) {
-    //                 let child_children = match child_node {
-    //                     ProofNode::Binary { .. } => ProofNodeChildren::Binary {
-    //                         left: None,
-    //                         right: None,
-    //                     },
-    //                     ProofNode::Edge { .. } => ProofNodeChildren::Edge { child: None },
-    //                 };
-    //                 Some(
-    //                     self.tree
-    //                         .proof_nodes
-    //                         .insert((child_node.clone(), child_children)),
-    //                 )
-    //             } else {
-    //                 None
-    //             };
-
-    //             ProofNodeChildren::Edge {
-    //                 child: child_node_id,
-    //             }
-    //         }
-    //     }
-    // }
-
     fn traverse_one_partial(
         &mut self,
         node_id: NodeKey,
@@ -551,6 +472,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
             };
 
             next_to_visit = self.traverse_one_partial(node_id, self.current_path.len(), key)?;
+
             // if let Some(next_id) = next_to_visit {
             //     visitor.visit_partial_node::<DB>(self.tree, next_id, self.current_path.len())?;
             // }
@@ -565,35 +487,6 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         }
     }
 }
-
-impl<H: StarkHash> MerkleTree<H> {
-    pub fn get_node_by_hash<DB: BonsaiDatabase>(
-        &self,
-        hash: Felt,
-    ) -> Result<Option<NodeKey>, BonsaiStorageError<DB::DatabaseError>> {
-        // First check root node
-        // if let Some(RootHandle::Loaded(root_id)) = self.root_node {
-        //     if let Some(node) = self.nodes.get(root_id) {
-        //         if node.get_hash() == Some(hash) {
-        //             return Ok(Some(root_id));
-        //         }
-        //     }
-        // }
-        println!("Looking for node with hash: {:?}", hash);
-
-        // Go through all nodes in the tree
-        for (node_id, node) in &self.nodes {
-            if node.get_hash() == Some(hash) {
-                return Ok(Some(node_id));
-            }
-        }
-
-        println!("No node found with hash: {:?}", hash);
-
-        Ok(None)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     //! The tree used in this series of tests looks like this:
