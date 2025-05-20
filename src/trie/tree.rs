@@ -685,6 +685,8 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                         self.commit_subtree::<DB>(updates, node_id, right_path, hashes)?
                     }
                 };
+                println!("\nProcessing node at height {}: {:?}", path.len(), node_id);
+                println!("Left leaf: {:?}, Right leaf: {:?}", left_hash, right_hash);
 
                 let hash = hashes.next().expect("mismatched hash state");
                 binary.hash = Some(hash);
@@ -695,6 +697,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                     TrieKey::new(&self.identifier, TrieKeyType::Trie, &key_bytes),
                     InsertOrRemove::Insert(Node::Binary(binary).encode_bytevec()),
                 );
+                println!("Hash of binary node: {:?}", hash);
                 Ok(hash)
             }
             Node::Edge(mut edge) => {
@@ -707,6 +710,8 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                     }
                 };
 
+                println!("\nProcessing node at height {}: {:?}", path.len(), node_id);
+
                 let hash = hashes.next().expect("mismatched hash state");
                 edge.hash = Some(hash);
                 edge.child = NodeHandle::Hash(child_hash);
@@ -715,6 +720,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                     TrieKey::new(&self.identifier, TrieKeyType::Trie, &key_bytes),
                     InsertOrRemove::Insert(Node::Edge(edge).encode_bytevec()),
                 );
+                println!("Hash of edge node: {:?}\n", hash);
                 Ok(hash)
             }
         }

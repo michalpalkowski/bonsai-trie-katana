@@ -146,7 +146,12 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
                 (binary_node.get_child(next_direction), true)
             }
             Node::Edge(edge_node) => {
+                println!("Edge node path: {:?}", edge_node.path);
                 self.current_path.extend_from_bitslice(&edge_node.path);
+                println!(
+                    "Current edge node path length: {:?}",
+                    self.current_path.len()
+                );
                 (edge_node.child, edge_node.path_matches(key, height))
             }
         };
@@ -159,6 +164,8 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         );
         if !path_matches || self.current_path.len() >= key.len() {
             self.leaf_hash = if path_matches && self.current_path.len() == key.len() {
+                println!("Leaf hash original trie: {:?}", node_handle.as_hash());
+                println!("Current path length: {:?}", self.current_path.len());
                 node_handle.as_hash()
             } else {
                 None
@@ -378,21 +385,24 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
                 }
             }
             ProofNode::Edge { child, path } => {
-                // if self.current_path.len() + path.len() > key.len() {
-                //     self.leaf_hash = None;
-                //     return Ok(None);
-                // }
+                println!("Path of edge node : {:?}", path);
                 self.current_path.extend_from_bitslice(&path);
                 child
             }
         };
 
+        println!("Current path: {:?}", self.current_path);
+        println!("Current path length: {:?}", self.current_path.len());
+        println!("Key length: {:?}", key.len());
+
         if self.current_path.len() >= key.len() {
+            println!("Child: {:?}", child);
             self.leaf_hash = if self.current_path.len() == key.len() {
                 Some(*child)
             } else {
                 None
             };
+            println!("Leaf hash: {:?}", self.leaf_hash);
             return Ok(None); // koniec przechodzenia
         }
 
@@ -409,16 +419,24 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         };
 
         if let Some(existing_node_id) = next_node_id {
+            // I THINK THIS MIGHT BE THE BUG BECAUSE WE HAVE NONE ON A LEAF HERE
+            // SO WE WILL TRY TO GET THE REST OF THE NODES IN ELSE STATEMENT FROM FULL PROOF WHILE BEING ON A LEAF WHICH IS BAD
+            println!("Existing node id: {:?}", existing_node_id);
             Ok(Some(*existing_node_id))
         } else {
+            println!("NODE DID NOT EXIST IN OUR PARTIAL TRIE LETS GET IT FROM FULL PROOF");
             //HERE IS THE POINT WHERE WE NEED TO GET THE REST OF THE NODES FROM FULL PROOF
+            // WE WILL BE HERE IN FIRST ITERATION BECAUSE WE HAVE EMPTY TRIE
             let proof_clone = self.proof.clone().unwrap().0.clone();
             // Pobierz węzeł z proofa dla tego hashu
             let Some(new_proof_node) = proof_clone.get(child) else {
+                println!("DID NOT FIND THE NODE IN PROOF");
+                // WE SHOULD BE HERE ON FIRST ITERATION WHEN WE GET TO THE LEAF
                 self.leaf_hash = None;
                 return Ok(None);
             };
-
+            println!("FOUND THE NODE IN PROOF");
+            println!("New proof node: {:?}", new_proof_node);
             // Utwórz nowy węzeł z odpowiednim typem children
             let child_type = self.tree.get_child_type(&new_proof_node, &proof_clone);
             let new_node_id = self
@@ -479,13 +497,13 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         let mut next_to_visit =
             if let Some((node_id, height)) = self.current_partial_nodes_heights.pop() {
                 self.current_path.truncate(height);
-                visitor.visit_partial_node::<DB>(self.tree, node_id, height)?;
+                // visitor.visit_partial_node::<DB>(self.tree, node_id, height)?;
                 self.traverse_one_partial(node_id, height, key)?
             } else {
                 // If we have already consstructed partial trie then we have node key for current root
                 //But its only one try because it should be updated
                 if let Some(root_node_id) = self.tree.current_root_node_id {
-                    visitor.visit_partial_node::<DB>(self.tree, root_node_id, 0)?;
+                    // visitor.visit_partial_node::<DB>(self.tree, root_node_id, 0)?;
                     Some(root_node_id)
                 } else {
                     // Start from tree root.
@@ -513,7 +531,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
                     println!("Created root node in tree: {:?}", root_node_id);
                     self.tree.current_root_node_id = Some(root_node_id);
 
-                    visitor.visit_partial_node::<DB>(self.tree, root_node_id, 0)?;
+                    // visitor.visit_partial_node::<DB>(self.tree, root_node_id, 0)?;
                     Some(root_node_id)
                 }
             };
@@ -533,9 +551,9 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
             };
 
             next_to_visit = self.traverse_one_partial(node_id, self.current_path.len(), key)?;
-            if let Some(next_id) = next_to_visit {
-                visitor.visit_partial_node::<DB>(self.tree, next_id, self.current_path.len())?;
-            }
+            // if let Some(next_id) = next_to_visit {
+            //     visitor.visit_partial_node::<DB>(self.tree, next_id, self.current_path.len())?;
+            // }
 
             log::trace!(
                 "Got nodeid={:?} height={}, cur path={:?}, next to visit={:?}",
