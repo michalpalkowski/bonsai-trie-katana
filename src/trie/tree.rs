@@ -51,11 +51,11 @@ pub(crate) enum RootHandle {
 
 #[derive(Debug, Clone, Copy)]
 pub enum ProofNodeChildren {
-    Binary {
+    BinaryChildrenHandle {
         left: Option<NodeKey>,
         right: Option<NodeKey>,
     },
-    Edge {
+    EdgeChildrenHandle {
         child: Option<NodeKey>,
     },
     None,
@@ -150,15 +150,23 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
     ) -> Result<NodeKey, PartialTrieError> {
         let binary_node = ProofNode::Binary { left, right };
 
-        let child_type = match (left_child_key, right_child_key) {
-            (Some(left), Some(right)) => ProofNodeChildren::Binary {
-                left: Some(left),
-                right: Some(right),
-            },
-            (Some(child), None) | (None, Some(child)) => {
-                ProofNodeChildren::Edge { child: Some(child) }
-            }
-            (None, None) => ProofNodeChildren::None,
+        // //WARNING:that is not true that binary node must have two children
+        // // its only pointer to a child and one can be None
+        // // but if there are two children, it must be binary
+        // let child_type = match (left_child_key, right_child_key) {
+        //     (Some(left), Some(right)) => ProofNodeChildren::Binary {
+        //         left: Some(left),
+        //         right: Some(right),
+        //     },
+        //     (Some(child), None) | (None, Some(child)) => {
+        //         ProofNodeChildren::Edge { child: Some(child) }
+        //     }
+        //     (None, None) => ProofNodeChildren::None,
+        // };
+
+        let child_type = ProofNodeChildren::BinaryChildrenHandle {
+            left: left_child_key,
+            right: right_child_key,
         };
 
         let node_id = self.proof_nodes.insert((binary_node, child_type));
@@ -224,77 +232,74 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         }
     }
 
-    //TODO!
-    //CHAT MADE THIS FUNCTION - I NEED TO CHECK IF IT IS CORRECT
-    pub fn get_child_type(
-        &mut self,
-        proof_node: &ProofNode,
-        proof: &hashbrown::HashMap<Felt, ProofNode>,
-    ) -> ProofNodeChildren {
-        match proof_node {
-            ProofNode::Binary { left, right } => {
-                // Utwórz węzeł dla lewego dziecka
-                let left_node_id = if let Some(left_node) = proof.get(left) {
-                    let left_children = match left_node {
-                        ProofNode::Binary { .. } => ProofNodeChildren::Binary {
-                            left: None,
-                            right: None,
-                        },
-                        ProofNode::Edge { .. } => ProofNodeChildren::Edge { child: None },
-                    };
-                    Some(self.proof_nodes.insert((left_node.clone(), left_children)))
-                } else {
-                    None
-                };
+    // //TODO!
+    // //CHAT MADE THIS FUNCTION - I NEED TO CHECK IF IT IS CORRECT
+    // pub fn insert_child_and_get_its_type(
+    //     &mut self,
+    //     proof_node: &ProofNode,
+    //     proof: &hashbrown::HashMap<Felt, ProofNode>,
+    // ) -> ProofNodeChildren {
+    //     match proof_node {
+    //         ProofNode::Binary { left, right } => {
+    //             let left_node_id = if let Some(left_node) = proof.get(left) {
+    //                 let left_children = match left_node {
+    //                     ProofNode::Binary { .. } => ProofNodeChildren::Binary {
+    //                         left: None,
+    //                         right: None,
+    //                     },
+    //                     ProofNode::Edge { .. } => ProofNodeChildren::Edge { child: None },
+    //                 };
+    //                 Some(self.proof_nodes.insert((left_node.clone(), left_children)))
+    //             } else {
+    //                 None
+    //             };
 
-                // Utwórz węzeł dla prawego dziecka
-                let right_node_id = if let Some(right_node) = proof.get(right) {
-                    let right_children = match right_node {
-                        ProofNode::Binary { .. } => ProofNodeChildren::Binary {
-                            left: None,
-                            right: None,
-                        },
-                        ProofNode::Edge { .. } => ProofNodeChildren::Edge { child: None },
-                    };
-                    Some(
-                        self.proof_nodes
-                            .insert((right_node.clone(), right_children)),
-                    )
-                } else {
-                    None
-                };
+    //             let right_node_id = if let Some(right_node) = proof.get(right) {
+    //                 let right_children = match right_node {
+    //                     ProofNode::Binary { .. } => ProofNodeChildren::Binary {
+    //                         left: None,
+    //                         right: None,
+    //                     },
+    //                     ProofNode::Edge { .. } => ProofNodeChildren::Edge { child: None },
+    //                 };
+    //                 Some(
+    //                     self.proof_nodes
+    //                         .insert((right_node.clone(), right_children)),
+    //                 )
+    //             } else {
+    //                 None
+    //             };
 
-                ProofNodeChildren::Binary {
-                    left: left_node_id,
-                    right: right_node_id,
-                }
-            }
-            ProofNode::Edge {
-                child: child_hash, ..
-            } => {
-                // Utwórz węzeł dla dziecka
-                let child_node_id = if let Some(child_node) = proof.get(child_hash) {
-                    let child_children = match child_node {
-                        ProofNode::Binary { .. } => ProofNodeChildren::Binary {
-                            left: None,
-                            right: None,
-                        },
-                        ProofNode::Edge { .. } => ProofNodeChildren::Edge { child: None },
-                    };
-                    Some(
-                        self.proof_nodes
-                            .insert((child_node.clone(), child_children)),
-                    )
-                } else {
-                    None
-                };
+    //             ProofNodeChildren::Binary {
+    //                 left: left_node_id,
+    //                 right: right_node_id,
+    //             }
+    //         }
+    //         ProofNode::Edge {
+    //             child: child_hash, ..
+    //         } => {
+    //             let child_node_id = if let Some(child_node) = proof.get(child_hash) {
+    //                 let child_children = match child_node {
+    //                     ProofNode::Binary { .. } => ProofNodeChildren::Binary {
+    //                         left: None,
+    //                         right: None,
+    //                     },
+    //                     ProofNode::Edge { .. } => ProofNodeChildren::Edge { child: None },
+    //                 };
+    //                 Some(
+    //                     self.proof_nodes
+    //                         .insert((child_node.clone(), child_children)),
+    //                 )
+    //             } else {
+    //                 None
+    //             };
 
-                ProofNodeChildren::Edge {
-                    child: child_node_id,
-                }
-            }
-        }
-    }
+    //             ProofNodeChildren::Edge {
+    //                 child: child_node_id,
+    //             }
+    //         }
+    //     }
+    // }
 
     /// First step of two phase init.
     pub(crate) fn load_db_node<DB: BonsaiDatabase, ID: Id>(

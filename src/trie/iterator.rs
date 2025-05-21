@@ -290,6 +290,11 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         self.current_partial_nodes_heights
             .push((node_id, self.current_path.len()));
 
+        println!("Current path length: {:?}", self.current_path.len());
+        println!("Key length: {:?}", key.len());
+        println!("Node id: {:?}", node_id);
+        let current_path_len = self.current_path.len();
+
         let (proof_node, children) = self.tree.get_proof_node_mut::<DB>(node_id)?;
         let child = match proof_node {
             ProofNode::Binary { left, right } => {
@@ -316,6 +321,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         println!("Current path length: {:?}", self.current_path.len());
         println!("Key length: {:?}", key.len());
 
+        //I need to add here condition for path mathes probably 
         if self.current_path.len() >= key.len() {
             println!("Child: {:?}", child);
             self.leaf_hash = if self.current_path.len() == key.len() {
@@ -328,14 +334,17 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         }
 
         let next_node_id = match children {
-            ProofNodeChildren::Binary { left, right } => {
-                let next_direction = Direction::from(key[self.current_path.len()]);
+            ProofNodeChildren::BinaryChildrenHandle { left, right } => {
+                //TODO: check if this is correct
+                //here with current_path_len was a bug that was causing traverse to stop too early
+                //need to think what value should be taken from key to traverse correctly
+                let next_direction = Direction::from(key[current_path_len]);
                 match next_direction {
                     Direction::Left => left,
                     Direction::Right => right,
                 }
             }
-            ProofNodeChildren::Edge { child } => child,
+            ProofNodeChildren::EdgeChildrenHandle { child } => child,
             ProofNodeChildren::None => &mut None,
         };
 
@@ -349,39 +358,45 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
             //HERE IS THE POINT WHERE WE NEED TO GET THE REST OF THE NODES FROM FULL PROOF
             // WE WILL BE HERE IN FIRST ITERATION BECAUSE WE HAVE EMPTY TRIE
             let proof_clone = self.proof.clone().unwrap().0.clone();
-            // Pobierz węzeł z proofa dla tego hashu
-            let Some(new_proof_node) = proof_clone.get(child) else {
+
+            // its a child of the last node in partial trie and it does not exist in partial trie
+            //so it wasn't changed so we can just get it from proof
+            let Some(child_node) = proof_clone.get(child) else {
                 println!("DID NOT FIND THE NODE IN PROOF");
                 // WE SHOULD BE HERE ON FIRST ITERATION WHEN WE GET TO THE LEAF
                 self.leaf_hash = None;
                 return Ok(None);
             };
             println!("FOUND THE NODE IN PROOF");
-            println!("New proof node: {:?}", new_proof_node);
-            // Utwórz nowy węzeł z odpowiednim typem children
-            let child_type = self.tree.get_child_type(&new_proof_node, &proof_clone);
+            println!("New child node to updae parent reference: {:?}", child_node);
+            // Create new node with correct type of children
+
+            let child_type = ProofNodeChildren::None;
             let new_node_id = self
                 .tree
                 .proof_nodes
-                .insert((new_proof_node.clone(), child_type));
-
+                .insert((child_node.clone(), child_type));
+            
             // Update children reference in parent node
             let (_, children) = self.tree.get_proof_node_mut::<DB>(node_id)?;
-            match children {
-                ProofNodeChildren::Binary { left, right } => {
+  
+            *children = match child_node {
+                ProofNode::Binary {..} => {
                     let next_direction = Direction::from(key[self.current_path.len()]);
                     match next_direction {
-                        Direction::Left => *left = Some(new_node_id),
-                        Direction::Right => *right = Some(new_node_id),
+                        Direction::Left => {
+                            ProofNodeChildren::BinaryChildrenHandle { left: Some(new_node_id), right: None }
+                        }
+                        Direction::Right => {
+                            ProofNodeChildren::BinaryChildrenHandle { left: None, right: Some(new_node_id) }
+                        }
                     }
                 }
-                ProofNodeChildren::Edge { child } => {
-                    *child = Some(new_node_id);
+                ProofNode::Edge {..} => {
+                    ProofNodeChildren::EdgeChildrenHandle { child: Some(new_node_id) }
                 }
-                ProofNodeChildren::None => {
-                    println!("No children found - think about it");
-                }
-            }
+            };
+
             Ok(Some(new_node_id))
         }
     }
@@ -444,15 +459,17 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
 
                     // Create proof node in tree
                     let root_node_clone = root_node.clone();
-                    let root_children = self.tree.get_child_type(root_node, &proof_clone);
+
+                    // Children are set recursively in traverse_one_partial
+                    let root_children = ProofNodeChildren::None;
                     let root_node_id = self
                         .tree
                         .proof_nodes
                         .insert((root_node_clone, root_children));
+
                     println!("Created root node in tree: {:?}", root_node_id);
                     self.tree.current_root_node_id = Some(root_node_id);
 
-                    // visitor.visit_partial_node::<DB>(self.tree, root_node_id, 0)?;
                     Some(root_node_id)
                 }
             };
@@ -512,7 +529,7 @@ mod tests {
     //! ```
 
     use crate::id::BasicIdBuilder;
-    use crate::BitVec;
+    use crate::{BitVec, HashMap};
     use crate::{
         databases::{create_rocks_db, RocksDB, RocksDBConfig},
         id::{BasicId, Id},
@@ -531,6 +548,7 @@ mod tests {
     const TWO: Felt = Felt::TWO;
     const THREE: Felt = Felt::THREE;
     const FOUR: Felt = Felt::from_hex_unchecked("0x4");
+    const FIVE: Felt = Felt::from_hex_unchecked("0x5");
 
     #[test]
     fn test_iterator_seek_to() {
@@ -548,26 +566,29 @@ mod tests {
         );
 
         bonsai_storage
-            .insert(&[], bits![u8, Msb0; 0,0,0,1,0,0,0,0], &ONE)
+            .insert(&[], bits![u8, Msb0; 0,0,0,0,0,0,0,1], &ONE)
             .unwrap();
         bonsai_storage
-            .insert(&[], bits![u8, Msb0; 0,0,0,1,0,0,0,1], &TWO)
+            .insert(&[], bits![u8, Msb0; 0,0,0,0,0,0,1,0], &TWO)
             .unwrap();
         bonsai_storage
-            .insert(&[], bits![u8, Msb0; 0,0,0,1,0,0,1,0], &THREE)
+            .insert(&[], bits![u8, Msb0; 0,0,0,0,0,0,1,1], &THREE)
             .unwrap();
         bonsai_storage
-            .insert(&[], bits![u8, Msb0; 0,1,0,0,0,0,0,0], &FOUR)
+            .insert(&[], bits![u8, Msb0; 0,0,0,0,0,1,0,0], &FOUR)
+            .unwrap();
+        bonsai_storage
+            .insert(&[], bits![u8, Msb0; 0,0,0,0,0,1,0,1], &FIVE)
             .unwrap();
 
         let mut id_builder = BasicIdBuilder::new();
         let id1 = id_builder.new_id();
         // bonsai_storage.commit(id1).unwrap();
         let mut bv = BitVec::new();
-        bv.extend_from_bitslice(&bits![u8, Msb0; 0,0,0,1,0,0,0,0]);
+        bv.extend_from_bitslice(&bits![u8, Msb0; 0,0,0,0,0,1,0,0]);
         let proof_keys: Vec<BitVec> = vec![bv];
         let multi_proof = bonsai_storage.get_multi_proof(&[], &proof_keys);
-        println!("Multi proof for node 0x1: {:?}", multi_proof.unwrap());
+        println!("Multi proof for node 0x4: {:?}", multi_proof.unwrap());
 
         let mut bv = BitVec::new();
         bv.extend_from_bitslice(&bits![u8, Msb0; 0,1,0,0,0,0,0,0]);
@@ -578,12 +599,15 @@ mod tests {
         bonsai_storage.dump();
 
         // Trie
+        println!("\ntree: {:?}\n", bonsai_storage.tries.trees);
 
         let tree = bonsai_storage
             .tries
             .trees
             .get_mut(&smallvec::smallvec![])
             .unwrap();
+        println!("\nTree NODES: {:?}\n", tree.nodes.iter().map(|(k, v)| (k, v)).collect::<HashMap<_, _>>());
+
         let mut iter = MerkleTreeIterator::new(tree, &bonsai_storage.tries.db);
 
         let cases_funcs = all_cases();
