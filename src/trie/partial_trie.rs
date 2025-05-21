@@ -269,7 +269,9 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                     };
                     println!("Returning edge node with binary node {:?}", new_node);
 
-                    let edge_child = ProofNodeChildren::EdgeChildrenHandle { child: Some(branch_node_key) };
+                    let edge_child = ProofNodeChildren::EdgeChildrenHandle {
+                        child: Some(branch_node_key),
+                    };
                     (edge_node_hash, new_node, edge_child)
                 };
 
@@ -306,7 +308,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                                 ProofNode::Binary {
                                     left: value,
                                     right: *right,
-                                }
+                                },
                             )
                         }
                         Direction::Right => {
@@ -317,7 +319,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                                 ProofNode::Binary {
                                     left: *left,
                                     right: value,
-                                }
+                                },
                             )
                         }
                     };
@@ -333,7 +335,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                     let final_hash = self.hash_up_merkle_path(key, current_hash, path_nodes, true);
                     Ok((final_hash, node, children))
                 } else {
-                    
                     println!("SOMETHING WENT WRONG THIS IS NOT IMPLEMENTED YET");
                     //I think we are at the last binary node where we should insert new value as a child lef or right
 
@@ -474,7 +475,10 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
 mod tests {
     use super::*;
     use crate::{
-        databases::{create_rocks_db, RocksDB, RocksDBConfig}, id::{BasicId, BasicIdBuilder}, trie::partial, BonsaiStorage, BonsaiStorageConfig
+        databases::{create_rocks_db, RocksDB, RocksDBConfig},
+        id::{BasicId, BasicIdBuilder},
+        trie::partial,
+        BonsaiStorage, BonsaiStorageConfig,
     };
     use bitvec::{bits, prelude::Msb0};
     use proptest::collection::vec;
@@ -900,16 +904,23 @@ mod tests {
         let four = bits![u8, Msb0; 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0];
         let five = bits![u8, Msb0; 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,1];
         let six = bits![u8, Msb0; 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0];
-        
+
         let keys = vec![one, two, three, four, five, six];
-        let values = vec![Felt::from(1), Felt::from(2), Felt::from(3), Felt::from(4), Felt::from(5), Felt::from(6)];
+        let values = vec![
+            Felt::from(1),
+            Felt::from(2),
+            Felt::from(3),
+            Felt::from(4),
+            Felt::from(5),
+            Felt::from(6),
+        ];
 
         for (key, value) in keys.iter().zip(values.iter()).take(3) {
             println!("Inserting key: {:?}", key);
             println!("Inserting value: {:?}", value);
             base_tree.insert(&identifier, key, value).unwrap();
             reference_tree.insert(&identifier3, key, value).unwrap(); // thats a referencje tree
-            // println!("bonsai trie: {:?}", bonsai_storage1.tries.trees.entry(smallvec::smallvec![1]).unwrap().proof_nodes);
+                                                                      // println!("bonsai trie: {:?}", bonsai_storage1.tries.trees.entry(smallvec::smallvec![1]).unwrap().proof_nodes);
         }
 
         let id1 = id_builder.new_id();
@@ -946,13 +957,31 @@ mod tests {
 
             println!("---------PROOF-------");
             println!("{:?}\n", proof);
-            
+
             // println!("\ntree: {:?}\n", bonsai_storage1.tries.trees.entry(smallvec::smallvec![1]));
             reference_tree.insert(&identifier3, key, value).unwrap();
-            println!("\nTree NODES: {:?}\n", reference_tree.tries.trees.get(&smallvec::smallvec![3]).unwrap().nodes.iter().map(|(k, v)| (k, v)).collect::<HashMap<_, _>>());
-            println!("\nPartialTree NODES before adding new key-value pair: {:?}\n", partial_trie.trie.proof_nodes.iter().map(|(k, v)| (k, v)).collect::<HashMap<_, _>>());
+            println!(
+                "\nTree NODES: {:?}\n",
+                reference_tree
+                    .tries
+                    .trees
+                    .get(&smallvec::smallvec![3])
+                    .unwrap()
+                    .nodes
+                    .iter()
+                    .map(|(k, v)| (k, v))
+                    .collect::<HashMap<_, _>>()
+            );
+            println!(
+                "\nPartialTree NODES before adding new key-value pair: {:?}\n",
+                partial_trie
+                    .trie
+                    .proof_nodes
+                    .iter()
+                    .map(|(k, v)| (k, v))
+                    .collect::<HashMap<_, _>>()
+            );
             reference_tree.commit(id_builder.new_id()).unwrap();
-
 
             let path_nodes = partial_trie
                 .get_partial_path_from_existing_trie(
@@ -966,17 +995,20 @@ mod tests {
             println!("PATH NODES: {:?}\n", path_nodes);
 
             let calculated_root = partial_trie
-                .build_from_visited_nodes(
-                    path_nodes.clone(),
-                    &key,
-                    *value,
-                    &mut fork_tree.tries.db,
-                )
+                .build_from_visited_nodes(path_nodes.clone(), &key, *value, &mut fork_tree.tries.db)
                 .unwrap();
             println!("Calculated root: {:?}\n", calculated_root);
 
             println!("Partial TRIE: {:?}\n", partial_trie.trie.proof_nodes);
-            println!("\nPartialTree NODES after adding new key-value pair: {:?}\n", partial_trie.trie.proof_nodes.iter().map(|(k, v)| (k, v)).collect::<HashMap<_, _>>());
+            println!(
+                "\nPartialTree NODES after adding new key-value pair: {:?}\n",
+                partial_trie
+                    .trie
+                    .proof_nodes
+                    .iter()
+                    .map(|(k, v)| (k, v))
+                    .collect::<HashMap<_, _>>()
+            );
 
             calculated_roots.push(calculated_root);
             current_root = calculated_root;

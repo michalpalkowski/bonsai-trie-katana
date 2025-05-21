@@ -321,7 +321,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         println!("Current path length: {:?}", self.current_path.len());
         println!("Key length: {:?}", key.len());
 
-        //I need to add here condition for path mathes probably 
+        //I need to add here condition for path mathes probably
         if self.current_path.len() >= key.len() {
             println!("Child: {:?}", child);
             self.leaf_hash = if self.current_path.len() == key.len() {
@@ -376,25 +376,27 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
                 .tree
                 .proof_nodes
                 .insert((child_node.clone(), child_type));
-            
+
             // Update children reference in parent node
             let (_, children) = self.tree.get_proof_node_mut::<DB>(node_id)?;
-  
+
             *children = match child_node {
-                ProofNode::Binary {..} => {
+                ProofNode::Binary { .. } => {
                     let next_direction = Direction::from(key[self.current_path.len()]);
                     match next_direction {
-                        Direction::Left => {
-                            ProofNodeChildren::BinaryChildrenHandle { left: Some(new_node_id), right: None }
-                        }
-                        Direction::Right => {
-                            ProofNodeChildren::BinaryChildrenHandle { left: None, right: Some(new_node_id) }
-                        }
+                        Direction::Left => ProofNodeChildren::BinaryChildrenHandle {
+                            left: Some(new_node_id),
+                            right: None,
+                        },
+                        Direction::Right => ProofNodeChildren::BinaryChildrenHandle {
+                            left: None,
+                            right: Some(new_node_id),
+                        },
                     }
                 }
-                ProofNode::Edge {..} => {
-                    ProofNodeChildren::EdgeChildrenHandle { child: Some(new_node_id) }
-                }
+                ProofNode::Edge { .. } => ProofNodeChildren::EdgeChildrenHandle {
+                    child: Some(new_node_id),
+                },
             };
 
             Ok(Some(new_node_id))
@@ -529,13 +531,13 @@ mod tests {
     //! ```
 
     use crate::id::BasicIdBuilder;
-    use crate::{BitVec, HashMap};
     use crate::{
         databases::{create_rocks_db, RocksDB, RocksDBConfig},
         id::{BasicId, Id},
         trie::iterator::MerkleTreeIterator,
         BonsaiDatabase, BonsaiStorage, BonsaiStorageConfig,
     };
+    use crate::{BitVec, HashMap};
     use bitvec::{bits, order::Msb0};
     use prop::{collection::vec, sample::size_range};
     use proptest::prelude::*;
@@ -606,7 +608,13 @@ mod tests {
             .trees
             .get_mut(&smallvec::smallvec![])
             .unwrap();
-        println!("\nTree NODES: {:?}\n", tree.nodes.iter().map(|(k, v)| (k, v)).collect::<HashMap<_, _>>());
+        println!(
+            "\nTree NODES: {:?}\n",
+            tree.nodes
+                .iter()
+                .map(|(k, v)| (k, v))
+                .collect::<HashMap<_, _>>()
+        );
 
         let mut iter = MerkleTreeIterator::new(tree, &bonsai_storage.tries.db);
 
