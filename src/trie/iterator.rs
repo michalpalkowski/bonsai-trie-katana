@@ -146,12 +146,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
                 (binary_node.get_child(next_direction), true)
             }
             Node::Edge(edge_node) => {
-                println!("Edge node path: {:?}", edge_node.path);
                 self.current_path.extend_from_bitslice(&edge_node.path);
-                println!(
-                    "Current edge node path length: {:?}",
-                    self.current_path.len()
-                );
                 (edge_node.child, edge_node.path_matches(key, height))
             }
         };
@@ -164,8 +159,6 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         );
         if !path_matches || self.current_path.len() >= key.len() {
             self.leaf_hash = if path_matches && self.current_path.len() == key.len() {
-                println!("Leaf hash original trie: {:?}", node_handle.as_hash());
-                println!("Current path length: {:?}", self.current_path.len());
                 node_handle.as_hash()
             } else {
                 None
@@ -290,9 +283,6 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         self.current_partial_nodes_heights
             .push((node_id, self.current_path.len()));
 
-        println!("Current path length: {:?}", self.current_path.len());
-        println!("Key length: {:?}", key.len());
-        println!("Node id: {:?}", node_id);
         let current_path_len = self.current_path.len();
 
         let (proof_node, children) = self.tree.get_proof_node_mut::<DB>(node_id)?;
@@ -317,10 +307,6 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
                 child
             }
         };
-
-        println!("Current path: {:?}", self.current_path);
-        println!("Current path length: {:?}", self.current_path.len());
-        println!("Key length: {:?}", key.len());
 
         //I need to add here condition for path mathes probably
         if !path_matches || self.current_path.len() >= key.len() {
@@ -369,7 +355,10 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
                 return Ok(None);
             };
             println!("FOUND THE NODE IN PROOF");
-            println!("New child node to updae parent reference: {:?}", child_node);
+            println!(
+                "New child node to update parent reference: {:?}",
+                child_node
+            );
             // Create new node with correct type of children
 
             let child_type = ProofNodeChildren::None;
@@ -383,7 +372,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
 
             *children = match child_node {
                 ProofNode::Binary { .. } => {
-                    let next_direction = Direction::from(key[self.current_path.len()]);
+                    let next_direction = Direction::from(key[current_path_len]);
                     match next_direction {
                         Direction::Left => ProofNodeChildren::BinaryChildrenHandle {
                             left: Some(new_node_id),
