@@ -296,6 +296,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         let current_path_len = self.current_path.len();
 
         let (proof_node, children) = self.tree.get_proof_node_mut::<DB>(node_id)?;
+        let path_matches = proof_node.path_matches(key, height);
         let child = match proof_node {
             ProofNode::Binary { left, right } => {
                 log::trace!(
@@ -322,15 +323,15 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         println!("Key length: {:?}", key.len());
 
         //I need to add here condition for path mathes probably
-        if self.current_path.len() >= key.len() {
+        if !path_matches || self.current_path.len() >= key.len() {
             println!("Child: {:?}", child);
-            self.leaf_hash = if self.current_path.len() == key.len() {
+            self.leaf_hash = if path_matches && self.current_path.len() == key.len() {
                 Some(*child)
             } else {
                 None
             };
             println!("Leaf hash: {:?}", self.leaf_hash);
-            return Ok(None); // koniec przechodzenia
+            return Ok(None); // end of traversal
         }
 
         let next_node_id = match children {
@@ -551,6 +552,7 @@ mod tests {
     const THREE: Felt = Felt::THREE;
     const FOUR: Felt = Felt::from_hex_unchecked("0x4");
     const FIVE: Felt = Felt::from_hex_unchecked("0x5");
+    const SIX: Felt = Felt::from_hex_unchecked("0x6");
 
     #[test]
     fn test_iterator_seek_to() {
@@ -581,6 +583,9 @@ mod tests {
             .unwrap();
         bonsai_storage
             .insert(&[], bits![u8, Msb0; 0,0,0,0,0,1,0,1], &FIVE)
+            .unwrap();
+        bonsai_storage
+            .insert(&[], bits![u8, Msb0; 0,0,0,0,0,1,1,0], &SIX)
             .unwrap();
 
         let mut id_builder = BasicIdBuilder::new();

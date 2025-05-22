@@ -66,6 +66,27 @@ impl ProofNode {
             ProofNode::Edge { child, path } => hash_edge_node::<H>(path, *child),
         }
     }
+    pub fn path_matches(&self, key: &BitSlice, node_height: usize) -> bool {
+        match self {
+            ProofNode::Binary { .. } => {
+                // For binary nodes, always return true, because there is no path to compare
+                true
+            }
+            ProofNode::Edge { path, .. } => {
+                // assert_eq!(self.height as usize, node_height);
+                let lower_bound = node_height.min(key.len());
+                let upper_bound = (node_height + path.0.len()).min(key.len());
+                log::trace!(
+                    "path_matches {:b}{lower_bound}..{upper_bound} ({}) - {:b}0..{}",
+                    &key[lower_bound..upper_bound],
+                    upper_bound - lower_bound,
+                    path.0,
+                    path.len()
+                );
+                path.starts_with(&key[lower_bound..upper_bound])
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -904,8 +904,9 @@ mod tests {
         let four = bits![u8, Msb0; 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0];
         let five = bits![u8, Msb0; 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,1];
         let six = bits![u8, Msb0; 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0];
+        let seven = bits![u8, Msb0; 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1];
 
-        let keys = vec![one, two, three, four, five, six];
+        let keys = vec![one, two, three, four, five, six, seven];
         let values = vec![
             Felt::from(1),
             Felt::from(2),
@@ -913,6 +914,7 @@ mod tests {
             Felt::from(4),
             Felt::from(5),
             Felt::from(6),
+            Felt::from(7),
         ];
 
         for (key, value) in keys.iter().zip(values.iter()).take(3) {
