@@ -286,7 +286,6 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
             .push((node_id, self.current_path.len()));
 
         let partial_trie_node = self.tree.get_proof_node_mut::<DB>(node_id)?;
-        // let path_matches = partial_trie_node.path_matches(key, height);
 
         let (proof_node_child, proof_node_handle, path_matches) = match partial_trie_node {
             PartialTrieNode::Binary(binary_node) => {
@@ -332,7 +331,6 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         if let Some(existing_node_id) = next_node_id {
             Ok(Some(existing_node_id))
         } else {
-            println!("NODE DID NOT EXIST IN OUR PARTIAL TRIE LETS GET IT FROM FULL PROOF");
             //HERE IS THE POINT WHERE WE NEED TO GET THE REST OF THE NODES FROM FULL PROOF
             // WE WILL BE HERE IN FIRST ITERATION BECAUSE WE HAVE EMPTY TRIE
             let proof_clone = self.proof.clone().unwrap().0.clone();

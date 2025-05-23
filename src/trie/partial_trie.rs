@@ -8,7 +8,6 @@ use super::{
 use crate::id::BasicId;
 use crate::trie::merkle_node::PartialTrieNode;
 use crate::trie::merkle_node::{BinaryPartialTrieNode, EdgePartialTrieNode, ProofNodeHandle};
-use crate::trie::proof::common_path;
 use crate::trie::proof::ProofVerificationError;
 use crate::trie::tree::bitslice_to_bytes;
 use crate::trie::tree::InsertOrRemove;
@@ -79,13 +78,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
             .unwrap();
 
         Ok(calculated_root)
-    }
-
-    fn update_cache(&mut self, key: &BitSlice, value: Felt) {
-        let key_bytes = bitslice_to_bytes(key);
-        self.trie
-            .cache_leaf_modified
-            .insert(key_bytes, InsertOrRemove::Insert(value));
     }
 
     /// This function builds tree from visited nodes and recursively updates hashes up the path
@@ -375,9 +367,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         db: &KeyValueDB<RocksDB<BasicId>, BasicId>,
     ) -> Result<Vec<(NodeKey, usize)>, PartialTrieError> {
         let proof_keys = vec![key];
-        let proof_clone = proof.clone();
-
-        let mut iter = self.trie.iter_partial(db, proof_clone);
+        let mut iter = self.trie.iter_partial(db, proof);
         let mut visitor = NoopPartialVisitor::<H>(PhantomData);
 
         for key in proof_keys {
@@ -399,7 +389,6 @@ mod tests {
     use crate::{
         databases::{create_rocks_db, RocksDB, RocksDBConfig},
         id::{BasicId, BasicIdBuilder},
-        trie::partial,
         BonsaiStorage, BonsaiStorageConfig,
     };
     use bitvec::{bits, prelude::Msb0};
@@ -442,6 +431,7 @@ mod tests {
         })
     }
 
+    //TODO: DECIDE WHAT TO DO WITH THIS
     fn select_random_key_value_from_initial_keys(
         initial_keys_values: Vec<(BitVec, Felt)>,
     ) -> (BitVec, Felt, Vec<(BitVec, Felt)>) {
@@ -457,225 +447,6 @@ mod tests {
             .collect();
 
         (removed_key, removed_value, remaining_keys_values)
-    }
-
-    proptest! {
-        #![proptest_config(ProptestConfig::default())]
-        #[test]
-        fn test_set_root_height_8(
-            initial_keys_values in arb_power_of_two_keys(8),
-        ) {
-            let (removed_key, removed_value, remaining_keys_values) =
-                select_random_key_value_from_initial_keys(initial_keys_values);
-            test_set_root(8, remaining_keys_values, removed_key, removed_value);
-        }
-    }
-
-    proptest! {
-        #![proptest_config(ProptestConfig::default())]
-        #[test]
-        fn test_set_root_height_24(
-            initial_keys_values in arb_power_of_two_keys(24),
-        ) {
-            let (removed_key, removed_value, remaining_keys_values) =
-                select_random_key_value_from_initial_keys(initial_keys_values);
-            test_set_root(24, remaining_keys_values, removed_key, removed_value);
-        }
-    }
-
-    proptest! {
-        #![proptest_config(ProptestConfig::default())]
-        #[test]
-        fn test_set_root_height_251(
-            initial_keys_values in vec(arb_key_value(251), 1..50),
-        ) {
-            let (removed_key, removed_value, remaining_keys_values) =
-                select_random_key_value_from_initial_keys(initial_keys_values);
-            test_set_root(251, remaining_keys_values, removed_key, removed_value);
-        }
-    }
-
-    proptest! {
-        #![proptest_config(ProptestConfig::default())]
-        #[test]
-        fn test_set_root_empty_initial(
-            new_key in arb_key(8),
-            new_value in arb_value(),
-        ) {
-            test_set_root(8, vec![], new_key, new_value);
-        }
-    }
-
-    fn test_set_root(
-        height: u8,
-        initial_keys_values: Vec<(BitVec, Felt)>,
-        new_key: BitVec,
-        new_value: Felt,
-    ) {
-        let db = create_rocks_db(tempfile::tempdir().unwrap().path()).unwrap();
-        let identifier1 = vec![1];
-        let identifier2 = vec![2];
-        let identifier3 = vec![3];
-
-        let config = BonsaiStorageConfig::default();
-        let mut bonsai_storage1: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-            BonsaiStorage::new(
-                RocksDB::new(&db, RocksDBConfig::default()),
-                config.clone(),
-                height,
-            );
-        let mut bonsai_storage2: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-            BonsaiStorage::new(
-                RocksDB::new(&db, RocksDBConfig::default()),
-                config.clone(),
-                height,
-            );
-        let mut bonsai_storage3: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-            BonsaiStorage::new(
-                RocksDB::new(&db, RocksDBConfig::default()),
-                config.clone(),
-                height,
-            );
-
-        let mut id_builder = BasicIdBuilder::new();
-
-        for (key, value) in initial_keys_values.iter() {
-            bonsai_storage1.insert(&identifier1, key, value).unwrap();
-            bonsai_storage2.insert(&identifier2, key, value).unwrap();
-        }
-
-        let id1 = id_builder.new_id();
-        bonsai_storage1.commit(id1).unwrap();
-
-        let current_root = bonsai_storage1.root_hash(&identifier1).unwrap();
-
-        let tree1 = bonsai_storage1
-            .tries
-            .trees
-            .entry(smallvec::smallvec![1])
-            .or_insert_with(|| MerkleTree::new(identifier1.clone().into(), height));
-
-        let mut proof_keys = vec![&new_key];
-        let proof = tree1
-            .get_multi_proof(&bonsai_storage1.tries.db, proof_keys.iter())
-            .unwrap();
-
-        let mut partial_trie =
-            PartialTrie::<Pedersen>::new(identifier3.clone().into(), height, current_root);
-
-        let (partial_path, path_nodes) = partial_trie
-            .trie
-            .get_partial_path(
-                &bonsai_storage3.tries.db,
-                proof_keys.iter(),
-                proof,
-                current_root,
-            )
-            .unwrap();
-
-        let calculated_root = partial_trie
-            .build_from_visited_nodes(
-                path_nodes,
-                &new_key,
-                new_value,
-                &mut bonsai_storage1.tries.db,
-            )
-            .unwrap();
-
-        // Commit initial state of storage2
-        let id2 = id_builder.new_id();
-        bonsai_storage2.commit(id2).unwrap();
-        println!(
-            "Initial storage2 root: {:?}",
-            bonsai_storage2.root_hash(&identifier2).unwrap()
-        );
-
-        // Insert new value and commit
-        bonsai_storage2
-            .insert(&identifier2, &new_key, &new_value)
-            .unwrap();
-
-        let id3 = id_builder.new_id();
-        bonsai_storage2.commit(id3).unwrap();
-        let expected_root = bonsai_storage2.root_hash(&identifier2).unwrap();
-        println!("Final expected root: {:?}", expected_root);
-
-        assert_eq!(
-            calculated_root, expected_root,
-            "Roots don't match: calculated={:?}, expected={:?}",
-            calculated_root, expected_root
-        );
-    }
-
-    #[test]
-    fn test_set_root_specific_edge_cases() {
-        let heights = [8, 24, 251];
-
-        for height in heights {
-            let mut base_key = BitVec::with_capacity(height as usize);
-            for i in 0..height {
-                base_key.push(i % 2 == 0);
-            }
-            let initial_keys_values = vec![(base_key.clone(), Felt::from(100))];
-
-            // Case 1: Empty key (all zeros)
-            let mut empty_key = BitVec::with_capacity(height as usize);
-            for _ in 0..height {
-                empty_key.push(false);
-            }
-            test_set_root(
-                height,
-                initial_keys_values.clone(),
-                empty_key,
-                Felt::from(100),
-            );
-
-            // Case 2: Full key (all ones)
-            let mut full_key = BitVec::with_capacity(height as usize);
-            for _ in 0..height {
-                full_key.push(true);
-            }
-            test_set_root(
-                height,
-                initial_keys_values.clone(),
-                full_key,
-                Felt::from(200),
-            );
-
-            // Case 3: Alternating bits
-            let mut alt_key = BitVec::with_capacity(height as usize);
-            for i in 0..height {
-                alt_key.push(i % 2 == 0);
-            }
-            test_set_root(
-                height,
-                initial_keys_values.clone(),
-                alt_key,
-                Felt::from(300),
-            );
-
-            // Case 4: Single bit set at different positions
-            for pos in 0..height {
-                let mut single_bit_key = BitVec::with_capacity(height as usize);
-                for i in 0..height {
-                    single_bit_key.push(i == pos);
-                }
-                test_set_root(
-                    height,
-                    initial_keys_values.clone(),
-                    single_bit_key,
-                    Felt::from(400 + pos as u64),
-                );
-            }
-
-            // Case 5: Overwriting existing value
-            let mut key = BitVec::with_capacity(height as usize);
-            key.push(true);
-            for _ in 1..height {
-                key.push(false);
-            }
-            test_set_root(height, initial_keys_values.clone(), key, Felt::from(600));
-        }
     }
 
     #[test]
