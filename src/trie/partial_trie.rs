@@ -5,8 +5,8 @@ use super::{
     proof::PartialPath,
     tree::{MerkleTree, NodeKey, ProofNodeChildren, RootHandle},
 };
-use crate::{databases::RocksDB, BonsaiStorageError, MultiProof};
 use crate::id::BasicId;
+use crate::trie::merkle_node::{BinaryPartialTrieNode, EdgePartialTrieNode, ProofNodeHandle};
 use crate::trie::proof::common_path;
 use crate::trie::proof::ProofVerificationError;
 use crate::trie::tree::bitslice_to_bytes;
@@ -14,6 +14,7 @@ use crate::trie::tree::InsertOrRemove;
 use crate::trie::TrieKey;
 use crate::ByteVec;
 use crate::ProofNode;
+use crate::{databases::RocksDB, BonsaiStorageError, MultiProof};
 use crate::{trie::merkle_node::NodeHandle, BitSlice, BitVec};
 use crate::{BonsaiDatabase, KeyValueDB};
 use core::marker::PhantomData;
@@ -21,8 +22,6 @@ use rocksdb::DB;
 use starknet_types_core::{felt::Felt, hash::StarkHash};
 use std::collections::HashMap;
 use std::collections::HashSet;
-use crate::trie::merkle_node::{BinaryPartialTrieNode,EdgePartialTrieNode, ProofNodeHandle};
-
 
 #[derive(Debug, thiserror::Error)]
 pub enum PartialTrieError {

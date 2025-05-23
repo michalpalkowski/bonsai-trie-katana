@@ -19,7 +19,7 @@ use super::{
     trie_db::TrieKeyType,
     TrieKey,
 };
-use crate::trie::merkle_node::{BinaryPartialTrieNode,EdgePartialTrieNode, ProofNodeHandle};
+use crate::trie::merkle_node::{BinaryPartialTrieNode, EdgePartialTrieNode, ProofNodeHandle};
 
 #[cfg(test)]
 use log::trace;

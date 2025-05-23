@@ -332,7 +332,10 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
                 //need to think what value should be taken from key to traverse correctly
                 println!("current_path_len: {:?}", current_path_len_at_beginning);
                 println!("key: {:?}", key);
-                println!("key[current_path_len]: {:?}", key[current_path_len_at_beginning]);
+                println!(
+                    "key[current_path_len]: {:?}",
+                    key[current_path_len_at_beginning]
+                );
                 let next_direction = Direction::from(key[current_path_len_at_beginning]);
                 println!("Next direction: {:?}", next_direction);
                 match next_direction {
