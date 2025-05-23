@@ -53,7 +53,7 @@ pub enum ProofVerificationError {
     InvalidProof,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ProofNode {
     Binary { left: Felt, right: Felt },
     Edge { child: Felt, path: Path },

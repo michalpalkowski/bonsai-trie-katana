@@ -4,7 +4,7 @@
 //! For more information about how these Starknet trees are structured, see
 //! [`MerkleTree`](super::merkle_tree::MerkleTree).
 
-use crate::BitSlice;
+use crate::{BitSlice, ProofNode};
 use bitvec::view::BitView;
 use core::fmt;
 use parity_scale_codec::{Decode, Encode};
@@ -34,6 +34,11 @@ impl NodeHandle {
         }
     }
 }
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Encode, Decode)]
+pub enum ProofNodeHandle {
+    Hash(Felt),
+    InMemory(NodeKey),
+}
 
 impl fmt::Debug for NodeHandle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -42,6 +47,28 @@ impl fmt::Debug for NodeHandle {
             NodeHandle::InMemory(node_id) => write!(f, "InMemory({:?})", node_id),
         }
     }
+}
+
+impl fmt::Debug for ProofNodeHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ProofNodeHandle::Hash(felt) => write!(f, "Hash({:#x})", felt),
+            ProofNodeHandle::InMemory(node_id) => write!(f, "InMemory({:?})", node_id),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BinaryPartialTrieNode {
+    pub proof_node: ProofNode,
+    pub left: ProofNodeHandle,
+    pub right: ProofNodeHandle,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct EdgePartialTrieNode {
+    pub proof_node: ProofNode,
+    pub child: ProofNodeHandle,
 }
 
 /// Describes the [Node::Binary] variant.

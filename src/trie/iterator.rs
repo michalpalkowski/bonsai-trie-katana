@@ -282,8 +282,11 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
     ) -> Result<Option<NodeKey>, BonsaiStorageError<DB::DatabaseError>> {
         self.current_partial_nodes_heights
             .push((node_id, self.current_path.len()));
-
+        println!("Current path: {:?}", self.current_path);
+        println!("Current path len: {:?}", self.current_path.len());
+        println!("Key: {:?}", key);
         let current_path_len = self.current_path.len();
+        let current_path_len_at_beginning = self.current_path.len().clone();
 
         let (proof_node, children) = self.tree.get_proof_node_mut::<DB>(node_id)?;
         let path_matches = proof_node.path_matches(key, height);
@@ -320,12 +323,18 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
             return Ok(None); // end of traversal
         }
 
+        println!("Children: {:?}", children);
+
         let next_node_id = match children {
             ProofNodeChildren::BinaryChildrenHandle { left, right } => {
                 //TODO: check if this is correct
                 //here with current_path_len was a bug that was causing traverse to stop too early
                 //need to think what value should be taken from key to traverse correctly
-                let next_direction = Direction::from(key[current_path_len]);
+                println!("current_path_len: {:?}", current_path_len_at_beginning);
+                println!("key: {:?}", key);
+                println!("key[current_path_len]: {:?}", key[current_path_len_at_beginning]);
+                let next_direction = Direction::from(key[current_path_len_at_beginning]);
+                println!("Next direction: {:?}", next_direction);
                 match next_direction {
                     Direction::Left => left,
                     Direction::Right => right,
@@ -372,7 +381,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
 
             *children = match child_node {
                 ProofNode::Binary { .. } => {
-                    let next_direction = Direction::from(key[current_path_len]);
+                    let next_direction = Direction::from(key[current_path_len_at_beginning]);
                     match next_direction {
                         Direction::Left => ProofNodeChildren::BinaryChildrenHandle {
                             left: Some(new_node_id),
@@ -559,38 +568,56 @@ mod tests {
         );
 
         bonsai_storage
-            .insert(&[], bits![u8, Msb0; 0,0,0,0,0,0,0,1], &ONE)
+            .insert(&[], bits![u8, Msb0; 1,0,0,0,0,0,0,0], &ONE)
             .unwrap();
         bonsai_storage
-            .insert(&[], bits![u8, Msb0; 0,0,0,0,0,0,1,0], &TWO)
+            .insert(&[], bits![u8, Msb0; 0,1,0,0,0,0,0,0], &TWO)
             .unwrap();
         bonsai_storage
-            .insert(&[], bits![u8, Msb0; 0,0,0,0,0,0,1,1], &THREE)
+            .insert(&[], bits![u8, Msb0; 1,1,0,0,0,0,0,0], &THREE)
             .unwrap();
         bonsai_storage
-            .insert(&[], bits![u8, Msb0; 0,0,0,0,0,1,0,0], &FOUR)
+            .insert(&[], bits![u8, Msb0; 0,0,1,0,0,0,0,0], &FOUR)
             .unwrap();
         bonsai_storage
-            .insert(&[], bits![u8, Msb0; 0,0,0,0,0,1,0,1], &FIVE)
+            .insert(&[], bits![u8, Msb0; 1,0,1,0,0,0,0,0], &FIVE)
             .unwrap();
-        bonsai_storage
-            .insert(&[], bits![u8, Msb0; 0,0,0,0,0,1,1,0], &SIX)
-            .unwrap();
+        // bonsai_storage
+        //     .insert(&[], bits![u8, Msb0; 0,0,0,0,0,1,1,0], &SIX)
+        //     .unwrap();
 
         let mut id_builder = BasicIdBuilder::new();
         let id1 = id_builder.new_id();
         // bonsai_storage.commit(id1).unwrap();
         let mut bv = BitVec::new();
-        bv.extend_from_bitslice(&bits![u8, Msb0; 0,0,0,0,0,1,0,0]);
+        bv.extend_from_bitslice(&bits![u8, Msb0; 1,0,0,0,0,0,0,0]);
         let proof_keys: Vec<BitVec> = vec![bv];
         let multi_proof = bonsai_storage.get_multi_proof(&[], &proof_keys);
-        println!("Multi proof for node 0x4: {:?}", multi_proof.unwrap());
+        println!("\nMulti proof for node 0x1: {:?}\n", multi_proof.unwrap());
 
         let mut bv = BitVec::new();
         bv.extend_from_bitslice(&bits![u8, Msb0; 0,1,0,0,0,0,0,0]);
         let proof_keys: Vec<BitVec> = vec![bv];
         let multi_proof = bonsai_storage.get_multi_proof(&[], &proof_keys);
-        println!("Multi proof for node 0x4: {:?}", multi_proof.unwrap());
+        println!("\nMulti proof for node 0x2: {:?}\n", multi_proof.unwrap());
+
+        let mut bv = BitVec::new();
+        bv.extend_from_bitslice(&bits![u8, Msb0; 1,1,0,0,0,0,0,0]);
+        let proof_keys: Vec<BitVec> = vec![bv];
+        let multi_proof = bonsai_storage.get_multi_proof(&[], &proof_keys);
+        println!("\nMulti proof for node 0x3: {:?}\n", multi_proof.unwrap());
+
+        let mut bv = BitVec::new();
+        bv.extend_from_bitslice(&bits![u8, Msb0; 0,0,1,0,0,0,0,0]);
+        let proof_keys: Vec<BitVec> = vec![bv];
+        let multi_proof = bonsai_storage.get_multi_proof(&[], &proof_keys);
+        println!("\nMulti proof for node 0x4: {:?}\n", multi_proof.unwrap());
+
+        let mut bv = BitVec::new();
+        bv.extend_from_bitslice(&bits![u8, Msb0; 1,0,1,0,0,0,0,0]);
+        let proof_keys: Vec<BitVec> = vec![bv];
+        let multi_proof = bonsai_storage.get_multi_proof(&[], &proof_keys);
+        println!("\nMulti proof for node 0x5: {:?}\n", multi_proof.unwrap());
 
         bonsai_storage.dump();
 
