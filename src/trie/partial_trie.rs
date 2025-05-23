@@ -227,12 +227,11 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 } else {
                     let edge_hash =
                         hash_edge_node::<H>(&Path(old_path.clone()), edge.child.as_hash().unwrap());
-                    //Children should be probably none as they are leafs
                     let edge_node = PartialTrieNode::Edge(EdgePartialTrieNode {
                         path: Path(old_path),
                         height: child_height as u64,
                         child: edge.child,
-                        child_handle: ProofNodeHandle::Hash(Felt::ZERO),
+                        child_handle: edge.child_handle,
                     });
 
                     let edge_id = self.trie.proof_nodes.insert(edge_node);
@@ -1348,6 +1347,7 @@ mod tests {
         let mut id_builder = BasicIdBuilder::new();
 
         for (key, value) in initial_keys_values.iter() {
+            println!("Inserting initial key: {:?}, value: {:?}", key, value);
             base_bonsai_storage
                 .insert(&base_identifier, key, value)
                 .unwrap();
@@ -1688,30 +1688,30 @@ mod tests {
             BonsaiStorage::new(
                 RocksDB::new(&base_db, RocksDBConfig::default()),
                 config.clone(),
-                2,
+                4,
             );
         let mut reference_bonsai_storage: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
             BonsaiStorage::new(
                 RocksDB::new(&reference_db, RocksDBConfig::default()),
                 config.clone(),
-                2,
+                4,
             );
         let mut fork_bonsai_storage: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
             BonsaiStorage::new(
                 RocksDB::new(&fork_db, RocksDBConfig::default()),
                 config.clone(),
-                2,
+                4,
             );
 
         let mut id_builder = BasicIdBuilder::new();
 
-        let one = bits![u8, Msb0; 1, 1];
-        let two = bits![u8, Msb0; 1, 0];
+        let one = bits![u8, Msb0; 1, 1, 1, 0];
+        // let two = bits![u8, Msb0; 1, 0];
 
         // Klucze początkowe
-        let initial_keys = vec![one, two];
+        let initial_keys = vec![one];
 
-        let initial_values = vec![Felt::from(0x65), Felt::from(0x65)];
+        let initial_values = vec![Felt::from(0x65)];
 
         for (key, value) in initial_keys.iter().zip(initial_values.iter()) {
             base_bonsai_storage
@@ -1727,21 +1727,25 @@ mod tests {
         println!("Original root: {:?}", original_root);
 
         let mut partial_trie =
-            PartialTrie::<Pedersen>::new(fork_identifier.clone().into(), 2, original_root);
+            PartialTrie::<Pedersen>::new(fork_identifier.clone().into(), 4, original_root);
 
         let tree1 = base_bonsai_storage
             .tries
             .trees
             .entry(smallvec::smallvec![base_identifier[0]])
-            .or_insert_with(|| MerkleTree::new(base_identifier.clone().into(), 2));
+            .or_insert_with(|| MerkleTree::new(base_identifier.clone().into(), 4));
 
         // Nowy klucz do dodania - ten sam co w oryginalnym teście
-        let new_key = bits![u8, Msb0; 1, 0];
-        let new_value = Felt::from(0x66); // 260
+        let new_key = bits![u8, Msb0; 1, 1, 0, 0];
+        let new_value = Felt::from(0x65); // 260
 
         // Nowy klucz do dodania - ten sam co w oryginalnym teście
-        let new_key2 = bits![u8, Msb0; 1, 0];
-        let new_value2 = Felt::from(0x67); // 260
+        let new_key2 = bits![u8, Msb0; 0, 0, 0, 0];
+        let new_value2 = Felt::from(0x65); // 260
+
+        // Nowy klucz do dodania - ten sam co w oryginalnym teście
+        let new_key3 = bits![u8, Msb0; 1, 1, 0, 0];
+        let new_value3 = Felt::from(0x65); // 260
 
         let proof_keys = vec![&new_key];
         let proof = tree1
@@ -1750,6 +1754,16 @@ mod tests {
         println!("Proof: {:?}", proof);
 
         println!("\nFIRST ITERATION\n");
+        println!(
+            "\nPartialTree NODES before adding FIRST new key-value pair: {:?}\n",
+            partial_trie
+                .trie
+                .proof_nodes
+                .iter()
+                .map(|(k, v)| (k, v))
+                .collect::<HashMap<_, _>>()
+        );
+
         let calculated_root = partial_trie
             .set(
                 &mut fork_bonsai_storage.tries.db,
@@ -1768,12 +1782,51 @@ mod tests {
         println!("Proof2: {:?}", proof2);
 
         println!("\nSECOND ITERATION\n");
+
+        println!(
+            "\nPartialTree NODES before adding SECOND new key-value pair: {:?}\n",
+            partial_trie
+                .trie
+                .proof_nodes
+                .iter()
+                .map(|(k, v)| (k, v))
+                .collect::<HashMap<_, _>>()
+        );
         let calculated_root = partial_trie
             .set(
                 &mut fork_bonsai_storage.tries.db,
                 &new_key2,
                 new_value2,
                 proof2,
+                original_root,
+            )
+            .unwrap();
+        println!("Calculated root: {:?}", calculated_root);
+
+        let proof_keys3 = vec![&new_key3];
+        let proof3 = tree1
+            .get_multi_proof(&base_bonsai_storage.tries.db, proof_keys3.iter())
+            .unwrap();
+        println!("Proof3: {:?}", proof3);
+
+        println!("\nThird ITERATION\n");
+
+        println!(
+            "\nPartialTree NODES before adding  THIRD new key-value pair: {:?}\n",
+            partial_trie
+                .trie
+                .proof_nodes
+                .iter()
+                .map(|(k, v)| (k, v))
+                .collect::<HashMap<_, _>>()
+        );
+
+        let calculated_root = partial_trie
+            .set(
+                &mut fork_bonsai_storage.tries.db,
+                &new_key3,
+                new_value3,
+                proof3,
                 original_root,
             )
             .unwrap();
@@ -1788,6 +1841,12 @@ mod tests {
             .unwrap();
         reference_bonsai_storage
             .insert(&reference_identifier, &new_key2, &new_value2)
+            .unwrap();
+        reference_bonsai_storage
+            .commit(id_builder.new_id())
+            .unwrap();
+        reference_bonsai_storage
+            .insert(&reference_identifier, &new_key3, &new_value3)
             .unwrap();
         reference_bonsai_storage
             .commit(id_builder.new_id())
