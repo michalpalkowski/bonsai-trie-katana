@@ -3,7 +3,7 @@ use super::{
     merkle_node::{hash_binary_node, hash_edge_node, BinaryNode, Direction, EdgeNode, Node},
     path::Path,
     proof::PartialPath,
-    tree::{MerkleTree, NodeKey, ProofNodeChildren, RootHandle},
+    tree::{MerkleTree, NodeKey, RootHandle},
 };
 use crate::id::BasicId;
 use crate::trie::merkle_node::{BinaryPartialTrieNode, EdgePartialTrieNode, ProofNodeHandle};
@@ -22,6 +22,7 @@ use rocksdb::DB;
 use starknet_types_core::{felt::Felt, hash::StarkHash};
 use std::collections::HashMap;
 use std::collections::HashSet;
+use crate::trie::merkle_node::PartialTrieNode;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PartialTrieError {
@@ -77,19 +78,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         Ok(calculated_root)
     }
 
-    /// This function creates a binary node and inserts it into the trie
-    fn create_binary_node(
-        &mut self,
-        branch_height: usize,
-        left: Felt,
-        right: Felt,
-        left_child_key: Option<NodeKey>,
-        right_child_key: Option<NodeKey>,
-    ) -> Result<NodeKey, PartialTrieError> {
-        self.trie
-            .insert_binary_node(branch_height, left, right, left_child_key, right_child_key)
-    }
-
     fn update_cache(&mut self, key: &BitSlice, value: Felt) {
         let key_bytes = bitslice_to_bytes(key);
         self.trie
@@ -112,24 +100,28 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
 
         match path_nodes.last() {
             Some((node_key, height)) => {
-                let (current_hash, node, children) =
+                let (current_hash, node) =
                     self.build_node_recursive(node_key, *height, key, value, &path_nodes, db)?;
-                self.trie.proof_nodes[*node_key] = (node, children);
+                self.trie.proof_nodes[*node_key] = node;
                 Ok(current_hash)
             }
             None => {
                 println!("WE HAVE EMPTY TREE, THIS SHOULD NEVER HAPPEN AS WE GET PROOF FROM THE FULL TRIE");
 
                 // Handle empty tree case
-                let edge_node = hash_edge_node::<H>(&Path(key.to_bitvec()), value);
-                let node_id =
-                    self.trie
-                        .insert_edge_node(0, &Path(key.to_bitvec()), value, edge_node, key)?;
+                let edge_node_hash = hash_edge_node::<H>(&Path(key.to_bitvec()), value);
+                let edge_node = PartialTrieNode::Edge(EdgePartialTrieNode {
+                    path: Path(key.to_bitvec()),
+                    child: ProofNodeHandle::Hash(value),
+                    child_handle: ProofNodeHandle::Hash(Felt::ZERO),
+                });
+                let node_id = self.trie.proof_nodes.insert(edge_node);
                 self.trie.root_node = Some(RootHandle::Loaded(node_id));
                 self.trie
                     .cache_leaf_modified
                     .insert(key_bytes, InsertOrRemove::Insert(value));
-                Ok(edge_node)
+
+                Ok(edge_node_hash)
             }
         }
     }
@@ -143,18 +135,14 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         value: Felt,
         path_nodes: &[(NodeKey, usize)],
         db: &mut KeyValueDB<RocksDB<BasicId>, BasicId>,
-    ) -> Result<(Felt, ProofNode, ProofNodeChildren), PartialTrieError> {
-        let (mut node, mut children) = self.trie.proof_nodes.get(*node_key).unwrap().clone();
+    ) -> Result<(Felt, PartialTrieNode), PartialTrieError> {
+        let mut node = self.trie.get_proof_node_mut::<RocksDB<BasicId>>(*node_key).unwrap().clone();
+        
 
         match &mut node {
-            ProofNode::Edge { child, path } => {
+            PartialTrieNode::Edge (edge) => {
                 println!("Building edge node");
-                let common = common_path(path, height as usize, key);
-                println!("Key: {:?}", key);
-                println!("Common: {:?}", common);
-                println!("Height: {:?}", height);
-                println!("Path: {:?}", path);
-
+                let common = common_path(&edge.path, height as usize, key);
                 let branch_height = height as usize + common.len();
 
                 println!("Branch height: {:?}", branch_height);
@@ -165,73 +153,52 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                     self.trie
                         .cache_leaf_modified
                         .insert(key_bytes, InsertOrRemove::Insert(value));
-                    *child = value;
+                    edge.child = ProofNodeHandle::Hash(value);
 
                     let final_hash = self.hash_up_merkle_path(key, value, path_nodes, false);
-                    self.trie.proof_nodes[*node_key] = (node.clone(), children.clone());
-                    return Ok((final_hash, node.clone(), children.clone()));
+                    self.trie.proof_nodes[*node_key] = node.clone();
+                    return Ok((final_hash, node.clone()));
                 }
 
                 let child_height = branch_height + 1;
                 // Path from binary node to new leaf
                 let new_path = key[child_height..].to_bitvec();
                 // Path from binary node to existing child
-                let old_path = path[common.len() + 1..].to_bitvec();
+                let old_path = edge.path[common.len() + 1..].to_bitvec();
 
                 let (new_hash, new_id) = if new_path.is_empty() {
                     println!("New path is empty");
-                    (value, None)
+                    (ProofNodeHandle::Hash(value), ProofNodeHandle::Hash(Felt::ZERO))
                 } else {
                     //Children should be probably none ase they are leafs
                     let edge_hash = hash_edge_node::<H>(&Path(new_path.clone()), value);
-                    let children = ProofNodeChildren::None;
+                    let edge_node = PartialTrieNode::Edge(EdgePartialTrieNode {
+                        path: Path(new_path),
+                        child: ProofNodeHandle::Hash(value),
+                        child_handle: ProofNodeHandle::Hash(Felt::ZERO),
+                    });
 
-                    let edge_id = self.trie.proof_nodes.insert((
-                        ProofNode::Edge {
-                            path: Path(new_path),
-                            child: value,
-                        },
-                        children,
-                    ));
+                    let edge_id = self.trie.proof_nodes.insert(edge_node);
 
-                    (edge_hash, Some(edge_id))
+                    (ProofNodeHandle::Hash(edge_hash), ProofNodeHandle::InMemory(edge_id))
                 };
 
-                println!("Children: {:?}", children);
-                let old_child = match children {
-                    ProofNodeChildren::None => None,
-                    // ProofNodeChildren::EdgeChildrenHandle { child } => child,
-                    ProofNodeChildren::BinaryChildrenHandle { left, right } => {
-                        let next_direction = Direction::from(key[branch_height]);
-                        match next_direction {
-                            //ITS REVERSED ON PURPOSE BUT I NEED TO THINK ABOUT IT
-                            // WE want here to get the opposite child to our direction
-                            //thats an old child
-                            Direction::Left => right,
-                            Direction::Right => left,
-                        }
-                    }
-                    _ => None,
-                };
-
-                println!("Old child: {:?}", old_child);
 
                 let (old_hash, old_id) = if old_path.is_empty() {
                     println!("Old path is empty");
-                    (*child, old_child)
+                    (edge.child, edge.child_handle)
                 } else {
-                    let edge_hash = hash_edge_node::<H>(&Path(old_path.clone()), *child);
+                    let edge_hash = hash_edge_node::<H>(&Path(old_path.clone()), edge.child.as_hash().unwrap());
                     //Children should be probably none as they are leafs
-                    let children = ProofNodeChildren::None;
-                    let edge_id = self.trie.proof_nodes.insert((
-                        ProofNode::Edge {
-                            path: Path(old_path),
-                            child: *child,
-                        },
-                        children,
-                    ));
+                    let edge_node = PartialTrieNode::Edge(EdgePartialTrieNode {
+                        path: Path(old_path),
+                        child: edge.child,
+                        child_handle: ProofNodeHandle::Hash(Felt::ZERO),
+                    });
 
-                    (edge_hash, Some(edge_id))
+                    let edge_id = self.trie.proof_nodes.insert(edge_node);
+
+                    (ProofNodeHandle::Hash(edge_hash), ProofNodeHandle::InMemory(edge_id))
                 };
 
                 let new_direction = Direction::from(key[branch_height]);
@@ -245,8 +212,14 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                     Direction::Right => (old_hash, new_hash),
                 };
 
-                let branch = ProofNode::Binary { left, right };
-                let branch_hash = hash_binary_node::<H>(left, right);
+                let branch = PartialTrieNode::Binary(BinaryPartialTrieNode {
+                    left: left,
+                    right: right,
+                    left_handle: left_child,
+                    right_handle: right_child,
+                });
+
+                let branch_hash = hash_binary_node::<H>(left.as_hash().unwrap(), right.as_hash().unwrap());
 
                 println!("Left: {:?}, Right: {:?}", left, right);
                 println!(
@@ -254,16 +227,11 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                     left_child, right_child
                 );
 
-                let (current_hash, new_node, child) = if common.is_empty() {
+                let (current_hash, new_node) = if common.is_empty() {
                     //here we dont want to create new node but we want to update the old one as in set() tree.rs
                     //read below for more details
                     println!("Returning binary node ONLY {:?}", branch);
-                    let binary_child = ProofNodeChildren::BinaryChildrenHandle {
-                        left: left_child,
-                        right: right_child,
-                    };
-
-                    (branch_hash, branch, binary_child)
+                    (branch_hash, branch)
                 } else {
                     let edge_node_hash =
                         hash_edge_node::<H>(&Path(common.to_bitvec()), branch_hash);
@@ -275,30 +243,21 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
 
                     //here we want to insert new node as we just created it and it will be a child of edge node as in tree.rs
                     // we will use branch_node_key as a child of higher edge node
-                    let branch_node_key = self.create_binary_node(
-                        branch_height,
-                        left,
-                        right,
-                        left_child,
-                        right_child,
-                    )?;
+                    let branch_node_key = self.trie.proof_nodes.insert(branch);
 
-                    let new_node = ProofNode::Edge {
+                    let new_node = PartialTrieNode::Edge(EdgePartialTrieNode {
                         path: Path(common.to_bitvec()),
-                        child: branch_hash,
-                    };
-                    println!("Returning edge node with binary node {:?}", new_node);
+                        child: ProofNodeHandle::Hash(branch_hash),
+                        child_handle: ProofNodeHandle::InMemory(branch_node_key),
+                    });
 
-                    let edge_child = ProofNodeChildren::EdgeChildrenHandle {
-                        child: Some(branch_node_key),
-                    };
-                    (edge_node_hash, new_node, edge_child)
+                    println!("Returning edge node with binary node {:?}", new_node);
+                    (edge_node_hash, new_node)
                 };
 
                 //these are the children of higher edge node so it should be inserted binary node
                 //or if there is no higher edge node then childs should be egde nodes inserted
                 //under binary node else there are leafs so children should be None as we do not insert them as nodes
-                children = child;
                 node = new_node;
 
                 println!("Path nodes: {:?}\n", path_nodes);
@@ -311,38 +270,38 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 let key_bytes = bitslice_to_bytes(&key[..height as usize]);
                 log::trace!("2 death row add ({:?})", key_bytes);
                 self.trie.death_row.insert(TrieKey::Trie(key_bytes));
-                Ok((final_hash, node, children))
+                Ok((final_hash, node))
             }
-            ProofNode::Binary { left, right } => {
+            PartialTrieNode::Binary (binary) => {
                 let child_height = height + 1;
                 let direction = Direction::from(key[height as usize]);
 
                 if child_height as usize == key.len() {
-                    println!("Building current node");
-                    println!("Value: {:?}", value);
-                    println!("Left: {:?}", *left);
-                    println!("Right: {:?}", *right);
                     let (current_hash, new_node) = match direction {
                         Direction::Left => {
                             //we return proof node to update binary node in proof_nodes
-                            let binary_node = hash_binary_node::<H>(value, *right);
+                            let binary_node = hash_binary_node::<H>(value, binary.right.as_hash().unwrap());
                             (
                                 binary_node,
-                                ProofNode::Binary {
-                                    left: value,
-                                    right: *right,
-                                },
+                                PartialTrieNode::Binary(BinaryPartialTrieNode {
+                                    left: ProofNodeHandle::Hash(value), //LEAFS
+                                    right: binary.right, //LEAFS
+                                    left_handle: ProofNodeHandle::Hash(Felt::ZERO), //LEAFS
+                                    right_handle: ProofNodeHandle::Hash(Felt::ZERO), //LEAFS
+                                }),
                             )
                         }
                         Direction::Right => {
                             //we return proof node to update binary node in proof_nodes
-                            let binary_node = hash_binary_node::<H>(*left, value);
+                            let binary_node = hash_binary_node::<H>(binary.left.as_hash().unwrap(), value);
                             (
                                 binary_node,
-                                ProofNode::Binary {
-                                    left: *left,
-                                    right: value,
-                                },
+                                PartialTrieNode::Binary(BinaryPartialTrieNode {
+                                    left: binary.left, //LEAFS
+                                    right: ProofNodeHandle::Hash(value), //LEAFS
+                                    left_handle: ProofNodeHandle::Hash(Felt::ZERO), //LEAFS
+                                    right_handle: ProofNodeHandle::Hash(Felt::ZERO), //LEAFS
+                                }),
                             )
                         }
                     };
@@ -351,12 +310,10 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                         .cache_leaf_modified
                         .insert(key_bytes, InsertOrRemove::Insert(value));
 
-                    let new_children = ProofNodeChildren::None; // Thats a leaf so no children
-                    children = new_children;
                     node = new_node;
 
                     let final_hash = self.hash_up_merkle_path(key, current_hash, path_nodes, true);
-                    Ok((final_hash, node, children))
+                    Ok((final_hash, node))
                 } else {
                     println!("Binary node which is not at the end of the path, we should fetch the full trie");
                     Err(PartialTrieError::NodeNotFound) // This case should be handled properly
@@ -396,57 +353,45 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         I: Iterator<Item = &'a (NodeKey, usize)>,
     {
         if let Some((node_key, height)) = nodes.next() {
-            let (node, children) = self.trie.proof_nodes.get(*node_key).unwrap().clone();
+            let node = self.trie.proof_nodes.get(*node_key).unwrap().clone();
             match node {
-                ProofNode::Binary { left, right } => {
+                PartialTrieNode::Binary (binary) => {
                     println!("PROCESSING BINARY NODE");
                     //HERE IS THE PROBLEM
-                    println!("Left leaf: {:?}, Right leaf: {:?}", left, right);
+                    println!("Left leaf: {:?}, Right leaf: {:?}", binary.left, binary.right);
                     let direction = Direction::from(key[*height as usize]);
                     let new_hash = match direction {
                         Direction::Left => {
-                            let binary_node = hash_binary_node::<H>(current_hash, right);
+                            let binary_node = hash_binary_node::<H>(current_hash, binary.right.as_hash().unwrap());
                             println!("New binary hash (left): {:?}", binary_node);
-                            self.trie.proof_nodes[*node_key] = (
-                                ProofNode::Binary {
-                                    left: current_hash,
-                                    right: right,
-                                },
-                                children.clone(),
-                            );
+                            self.trie.proof_nodes[*node_key] =
+                                PartialTrieNode::Binary(BinaryPartialTrieNode {
+                                    left: ProofNodeHandle::Hash(current_hash),
+                                    ..binary
+                                });
                             binary_node
                         }
                         Direction::Right => {
-                            let binary_node = hash_binary_node::<H>(left, current_hash);
+                            let binary_node = hash_binary_node::<H>(binary.left.as_hash().unwrap(), current_hash);
                             println!("New binary hash (right): {:?}", binary_node);
-                            self.trie.proof_nodes[*node_key] = (
-                                ProofNode::Binary {
-                                    left: left,
-                                    right: current_hash,
-                                },
-                                children.clone(),
-                            );
+                            self.trie.proof_nodes[*node_key] = 
+                                PartialTrieNode::Binary(BinaryPartialTrieNode {
+                                    right: ProofNodeHandle::Hash(current_hash),
+                                    ..binary
+                                });
                             binary_node
                         }
                     };
                     self.hash_up_recursive(key, new_hash, nodes)
                 }
-                ProofNode::Edge {
-                    path: edge_path,
-                    child: _,
-                } => {
-                    println!("PROCESSING EDGE NODE");
-                    println!("Current hash: {:?}", current_hash);
-                    println!("Edge path: {:?}", edge_path);
-                    let edge_node = hash_edge_node::<H>(&edge_path, current_hash);
+                PartialTrieNode::Edge (edge) => {
+                    let edge_node = hash_edge_node::<H>(&edge.path, current_hash);
                     println!("New edge hash: {:?}", edge_node);
-                    self.trie.proof_nodes[*node_key] = (
-                        ProofNode::Edge {
-                            path: edge_path.clone(),
-                            child: current_hash,
-                        },
-                        children.clone(),
-                    );
+                    self.trie.proof_nodes[*node_key] = PartialTrieNode::Edge(EdgePartialTrieNode {
+                        path: edge.path.clone(),
+                        child: ProofNodeHandle::Hash(current_hash),
+                        ..edge
+                    });
                     self.hash_up_recursive(key, edge_node, nodes)
                 }
             }
@@ -1059,41 +1004,41 @@ mod tests {
         let actual_root = tree_to_compare.root_hash(&identifier2).unwrap();
         assert_eq!(current_root, actual_root, "Next root calculation failed");
 
-        // println!(
-        //     "Partial TRIE before updating root: {:?}\n",
-        //     partial_trie.trie.proof_nodes
-        // );
-        // println!(
-        //     "\nPartialTree NODES before updating root: {:?}\n",
-        //     partial_trie
-        //         .trie
-        //         .proof_nodes
-        //         .iter()
-        //         .map(|(k, v)| (k, v))
-        //         .collect::<HashMap<_, _>>()
-        // );
+        println!(
+            "Partial TRIE before updating root: {:?}\n",
+            partial_trie.trie.proof_nodes
+        );
+        println!(
+            "\nPartialTree NODES before updating root: {:?}\n",
+            partial_trie
+                .trie
+                .proof_nodes
+                .iter()
+                .map(|(k, v)| (k, v))
+                .collect::<HashMap<_, _>>()
+        );
 
-        // let calculated_updated_root = partial_trie
-        //     .set(
-        //         &mut fork_tree.tries.db,
-        //         one,
-        //         Felt::from(13),
-        //         proof_for_one,
-        //         original_root,
-        //     )
-        //     .unwrap();
-        // println!("Calculated root: {:?}\n", calculated_updated_root);
+        let calculated_updated_root = partial_trie
+            .set(
+                &mut fork_tree.tries.db,
+                one,
+                Felt::from(13),
+                proof_for_one,
+                original_root,
+            )
+            .unwrap();
+        println!("Calculated root: {:?}\n", calculated_updated_root);
 
-        // tree_to_compare
-        //     .insert(&identifier2, one, &Felt::from(13))
-        //     .unwrap();
-        // tree_to_compare.commit(id_builder.new_id()).unwrap();
+        tree_to_compare
+            .insert(&identifier2, one, &Felt::from(13))
+            .unwrap();
+        tree_to_compare.commit(id_builder.new_id()).unwrap();
 
-        // let actual_updated_root = tree_to_compare.root_hash(&identifier2).unwrap();
-        // assert_eq!(
-        //     calculated_updated_root, actual_updated_root,
-        //     "UPDATING ROOT FAILED"
-        // );
+        let actual_updated_root = tree_to_compare.root_hash(&identifier2).unwrap();
+        assert_eq!(
+            calculated_updated_root, actual_updated_root,
+            "UPDATING ROOT FAILED"
+        );
     }
 
     #[test]

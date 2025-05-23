@@ -25,6 +25,7 @@ use crate::{
 use core::{marker::PhantomData, mem, ops::DerefMut};
 use hashbrown::hash_set;
 use starknet_types_core::{felt::Felt, hash::StarkHash};
+use crate::trie::merkle_node::PartialTrieNode;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProofVerificationError {
@@ -90,7 +91,7 @@ impl ProofNode {
 }
 
 #[derive(Debug, Clone)]
-pub struct PartialPath(pub HashMap<NodeKey, (ProofNode, ProofNodeChildren)>);
+pub struct PartialPath(pub HashMap<NodeKey, PartialTrieNode>);
 #[derive(Debug, Clone)]
 pub struct MultiProof(pub HashMap<Felt, ProofNode>);
 impl MultiProof {
@@ -265,10 +266,10 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                 node_id: NodeKey,
                 _prev_height: usize,
             ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
-                let (proof_node, children) = tree.get_proof_node_mut::<DB>(node_id)?;
+                let proof_node = tree.get_proof_node_mut::<DB>(node_id)?;
                 self.0
                      .0
-                    .insert(node_id, (proof_node.clone(), children.clone()));
+                    .insert(node_id, proof_node.clone());
                 Ok(())
             }
         }

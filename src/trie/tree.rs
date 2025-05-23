@@ -19,7 +19,7 @@ use super::{
     trie_db::TrieKeyType,
     TrieKey,
 };
-use crate::trie::merkle_node::{BinaryPartialTrieNode, EdgePartialTrieNode, ProofNodeHandle};
+use crate::trie::merkle_node::{BinaryPartialTrieNode, EdgePartialTrieNode, ProofNodeHandle, PartialTrieNode};
 
 #[cfg(test)]
 use log::trace;
@@ -73,7 +73,7 @@ pub struct MerkleTree<H: StarkHash> {
     pub(crate) current_root_node_id: Option<NodeKey>,
     /// In-memory nodes.
     pub(crate) nodes: SlotMap<NodeKey, Node>,
-    pub(crate) proof_nodes: SlotMap<NodeKey, (ProofNode, ProofNodeChildren)>,
+    pub(crate) proof_nodes: SlotMap<NodeKey, PartialTrieNode>,
     /// Identifier of the tree in the database.
     pub(crate) identifier: ByteVec,
     /// The list of nodes that should be removed from the underlying database during the next commit.
@@ -139,70 +139,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
             max_height,
             _hasher: PhantomData,
         }
-    }
-
-    pub fn insert_binary_node(
-        &mut self,
-        height: usize,
-        left: Felt,
-        right: Felt,
-        left_child_key: Option<NodeKey>,
-        right_child_key: Option<NodeKey>,
-    ) -> Result<NodeKey, PartialTrieError> {
-        let binary_node = ProofNode::Binary { left, right };
-
-        // //WARNING:that is not true that binary node must have two children
-        // // its only pointer to a child and one can be None
-        // // but if there are two children, it must be binary
-        // let child_type = match (left_child_key, right_child_key) {
-        //     (Some(left), Some(right)) => ProofNodeChildren::Binary {
-        //         left: Some(left),
-        //         right: Some(right),
-        //     },
-        //     (Some(child), None) | (None, Some(child)) => {
-        //         ProofNodeChildren::Edge { child: Some(child) }
-        //     }
-        //     (None, None) => ProofNodeChildren::None,
-        // };
-
-        let child_type = ProofNodeChildren::BinaryChildrenHandle {
-            left: left_child_key,
-            right: right_child_key,
-        };
-
-        let node_id = self.proof_nodes.insert((binary_node, child_type));
-
-        if height == 0 {
-            self.root_node = Some(RootHandle::Loaded(node_id));
-        }
-
-        Ok(node_id)
-    }
-
-    /// THIS FUNCTION SHOULD BE ONLY USED WHEN INSERTING THE ROOT NODE
-    /// AS IT DOES NOT HAVE CHILDREN INTEGRATED YET
-    pub fn insert_edge_node(
-        &mut self,
-        height: u64,
-        path: &Path,
-        child: Felt,
-        hash: Felt,
-        key: &BitSlice,
-    ) -> Result<NodeKey, PartialTrieError> {
-        // THIS FUNCTION IS ONLY USED WHEN INSERTING THE ROOT NODE
-        let edge_node = ProofNode::Edge {
-            child,
-            path: path.clone(),
-        };
-        //THATS WRONG - children should be inserted and then filled with the correct value
-        let child_type = ProofNodeChildren::None;
-        let node_id = self.proof_nodes.insert((edge_node, child_type));
-
-        if height == 0 {
-            self.root_node = Some(RootHandle::Loaded(node_id));
-        }
-
-        Ok(node_id)
     }
 
     /// Loads the root node or returns None if the tree is empty.
@@ -332,7 +268,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
     pub(crate) fn get_proof_node_mut<DB: BonsaiDatabase>(
         &mut self,
         node_key: NodeKey,
-    ) -> Result<&mut (ProofNode, ProofNodeChildren), BonsaiStorageError<DB::DatabaseError>> {
+    ) -> Result<&mut PartialTrieNode, BonsaiStorageError<DB::DatabaseError>> {
         self.proof_nodes.get_mut(node_key).ok_or_else(|| {
             BonsaiStorageError::Trie(format!("Dangling in-memory node key: {node_key:?}"))
         })
@@ -360,6 +296,21 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                 Ok(node_key)
             }
             NodeHandle::InMemory(node_key) => Ok(node_key),
+        }
+    }
+
+    pub(crate) fn load_proof_node_handle<DB: BonsaiDatabase, ID: Id>(
+        &mut self,
+        db: &KeyValueDB<DB, ID>,
+        handle: ProofNodeHandle,
+        path: &Path,
+    ) -> Result<Option<NodeKey>, BonsaiStorageError<DB::DatabaseError>> {
+        match handle {
+            ProofNodeHandle::Hash(hash) => {
+                // TODO(perf): useless allocs everywhere here...
+                Ok(None)
+            }
+            ProofNodeHandle::InMemory(node_key) => Ok(Some(node_key)),
         }
     }
 

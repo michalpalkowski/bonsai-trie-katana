@@ -4,12 +4,13 @@ use super::{
     tree::{MerkleTree, NodeKey, ProofNodeChildren, RootHandle},
 };
 use crate::{
-    id::Id, key_value_db::KeyValueDB, BitSlice, BonsaiDatabase, BonsaiStorageError, MultiProof,
-    ProofNode, Vec,
+    id::Id, key_value_db::KeyValueDB, trie::merkle_node::BinaryPartialTrieNode, BitSlice, BonsaiDatabase, BonsaiStorageError, MultiProof, ProofNode, Vec
 };
 use core::{fmt, marker::PhantomData};
 use starknet_types_core::{felt::Felt, hash::StarkHash};
 use std::collections::HashMap;
+use crate::trie::merkle_node::PartialTrieNode;
+use crate::trie::merkle_node::{ProofNodeHandle, EdgePartialTrieNode};
 
 /// This trait's function will be called on every node visited during a seek operation.
 pub trait NodeVisitor<H: StarkHash> {
@@ -288,10 +289,11 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         let current_path_len = self.current_path.len();
         let current_path_len_at_beginning = self.current_path.len().clone();
 
-        let (proof_node, children) = self.tree.get_proof_node_mut::<DB>(node_id)?;
-        let path_matches = proof_node.path_matches(key, height);
-        let child = match proof_node {
-            ProofNode::Binary { left, right } => {
+        let partial_trie_node= self.tree.get_proof_node_mut::<DB>(node_id)?;
+        // let path_matches = partial_trie_node.path_matches(key, height);
+
+        let (proof_node_child,proof_node_handle, path_matches) = match partial_trie_node {
+            PartialTrieNode::Binary(binary_node) => {
                 log::trace!(
                     "Continue from binary node current_path={:?} key={:b}",
                     self.current_path,
@@ -299,23 +301,19 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
                 );
                 let next_direction = Direction::from(key[self.current_path.len()]);
                 self.current_path.push(bool::from(next_direction));
-                match next_direction {
-                    Direction::Left => left,
-                    Direction::Right => right,
-                }
+                (binary_node.get_child(next_direction), binary_node.get_child_handle(next_direction), true)
             }
-            ProofNode::Edge { child, path } => {
-                println!("Path of edge node : {:?}", path);
-                self.current_path.extend_from_bitslice(&path);
-                child
+            PartialTrieNode::Edge(edge_node) => {
+                self.current_path.extend_from_bitslice(&edge_node.path);
+                (edge_node.child, edge_node.child_handle, edge_node.path_matches(key, height))
             }
         };
 
         //I need to add here condition for path mathes probably
         if !path_matches || self.current_path.len() >= key.len() {
-            println!("Child: {:?}", child);
+            println!("Child: {:?}", proof_node_handle.as_hash());
             self.leaf_hash = if path_matches && self.current_path.len() == key.len() {
-                Some(*child)
+               proof_node_handle.as_hash()
             } else {
                 None
             };
@@ -323,35 +321,14 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
             return Ok(None); // end of traversal
         }
 
-        println!("Children: {:?}", children);
-
-        let next_node_id = match children {
-            ProofNodeChildren::BinaryChildrenHandle { left, right } => {
-                //TODO: check if this is correct
-                //here with current_path_len was a bug that was causing traverse to stop too early
-                //need to think what value should be taken from key to traverse correctly
-                println!("current_path_len: {:?}", current_path_len_at_beginning);
-                println!("key: {:?}", key);
-                println!(
-                    "key[current_path_len]: {:?}",
-                    key[current_path_len_at_beginning]
-                );
-                let next_direction = Direction::from(key[current_path_len_at_beginning]);
-                println!("Next direction: {:?}", next_direction);
-                match next_direction {
-                    Direction::Left => left,
-                    Direction::Right => right,
-                }
-            }
-            ProofNodeChildren::EdgeChildrenHandle { child } => child,
-            ProofNodeChildren::None => &mut None,
-        };
-
+        println!("Proof node handle: {:?}", proof_node_handle);
+        let next_node_id = self.tree.load_proof_node_handle::<DB, ID>(self.db, proof_node_handle, &self.current_path)?;
+        println!("Next node id: {:?}", next_node_id);
         if let Some(existing_node_id) = next_node_id {
             // I THINK THIS MIGHT BE THE BUG BECAUSE WE HAVE NONE ON A LEAF HERE
             // SO WE WILL TRY TO GET THE REST OF THE NODES IN ELSE STATEMENT FROM FULL PROOF WHILE BEING ON A LEAF WHICH IS BAD
             println!("Existing node id: {:?}", existing_node_id);
-            Ok(Some(*existing_node_id))
+            Ok(Some(existing_node_id))
         } else {
             println!("NODE DID NOT EXIST IN OUR PARTIAL TRIE LETS GET IT FROM FULL PROOF");
             //HERE IS THE POINT WHERE WE NEED TO GET THE REST OF THE NODES FROM FULL PROOF
@@ -360,7 +337,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
 
             // its a child of the last node in partial trie and it does not exist in partial trie
             //so it wasn't changed so we can just get it from proof
-            let Some(child_node) = proof_clone.get(child) else {
+            let Some(child_node) = proof_clone.get(&proof_node_child.as_hash().unwrap()) else {
                 println!("DID NOT FIND THE NODE IN PROOF");
                 // WE SHOULD BE HERE ON FIRST ITERATION WHEN WE GET TO THE LEAF
                 self.leaf_hash = None;
@@ -373,32 +350,43 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
             );
             // Create new node with correct type of children
 
-            let child_type = ProofNodeChildren::None;
+            let child = match child_node {
+                ProofNode::Binary { left, right } => {
+                    PartialTrieNode::Binary(BinaryPartialTrieNode {
+                        left: ProofNodeHandle::Hash(*left),
+                        right: ProofNodeHandle::Hash(*right),
+                        left_handle: ProofNodeHandle::Hash(Felt::ZERO), //Felt::Zero means None
+                        right_handle: ProofNodeHandle::Hash(Felt::ZERO), //Felt::Zero means None
+                    })
+                }
+                ProofNode::Edge { child, path } => {
+                    PartialTrieNode::Edge(EdgePartialTrieNode {
+                        child: ProofNodeHandle::Hash(*child),
+                        path: path.clone(),
+                        child_handle: ProofNodeHandle::Hash(Felt::ZERO), //Felt::Zero means None
+                    })
+                }
+            };
+
             let new_node_id = self
                 .tree
                 .proof_nodes
-                .insert((child_node.clone(), child_type));
+                .insert(child);
 
             // Update children reference in parent node
-            let (_, children) = self.tree.get_proof_node_mut::<DB>(node_id)?;
-
-            *children = match child_node {
-                ProofNode::Binary { .. } => {
-                    let next_direction = Direction::from(key[current_path_len_at_beginning]);
-                    match next_direction {
-                        Direction::Left => ProofNodeChildren::BinaryChildrenHandle {
-                            left: Some(new_node_id),
-                            right: None,
-                        },
-                        Direction::Right => ProofNodeChildren::BinaryChildrenHandle {
-                            left: None,
-                            right: Some(new_node_id),
-                        },
-                    }
+          
+            match self.tree.get_proof_node_mut::<DB>(node_id)? {
+                PartialTrieNode::Binary(binary_node) => {
+                    *binary_node.get_child_handle_mut(Direction::from(
+                        *self
+                            .current_path
+                            .last()
+                            .expect("current path should have a length > 0 at this point"),
+                    )) = ProofNodeHandle::InMemory(new_node_id);
                 }
-                ProofNode::Edge { .. } => ProofNodeChildren::EdgeChildrenHandle {
-                    child: Some(new_node_id),
-                },
+                PartialTrieNode::Edge(edge_node) => {
+                    edge_node.child = ProofNodeHandle::InMemory(new_node_id);
+                }
             };
 
             Ok(Some(new_node_id))
@@ -461,15 +449,29 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
                     };
                     println!("Found root node in proof: {:?}", root_node);
 
-                    // Create proof node in tree
-                    let root_node_clone = root_node.clone();
-
                     // Children are set recursively in traverse_one_partial
-                    let root_children = ProofNodeChildren::None;
+                    let partial_root_node = match root_node {
+                        ProofNode::Binary { left, right } => {
+                            PartialTrieNode::Binary(BinaryPartialTrieNode {
+                                left: ProofNodeHandle::Hash(*left),
+                                right: ProofNodeHandle::Hash(*right),
+                                left_handle: ProofNodeHandle::Hash(Felt::ZERO), //Felt::Zero means None
+                                right_handle: ProofNodeHandle::Hash(Felt::ZERO), //Felt::Zero means None
+                            })
+                        }
+                        ProofNode::Edge { child, path } => {
+                            PartialTrieNode::Edge(EdgePartialTrieNode {
+                                child: ProofNodeHandle::Hash(*child),
+                                path: path.clone(),
+                                child_handle: ProofNodeHandle::Hash(Felt::ZERO), //Felt::Zero means None
+                            })
+                        }
+                    };
+        
                     let root_node_id = self
                         .tree
                         .proof_nodes
-                        .insert((root_node_clone, root_children));
+                        .insert(partial_root_node);
 
                     println!("Created root node in tree: {:?}", root_node_id);
                     self.tree.current_root_node_id = Some(root_node_id);
