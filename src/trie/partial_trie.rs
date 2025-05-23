@@ -19,6 +19,7 @@ use crate::{databases::RocksDB, BonsaiStorageError, MultiProof};
 use crate::{trie::merkle_node::NodeHandle, BitSlice, BitVec};
 use crate::{BonsaiDatabase, KeyValueDB};
 use core::marker::PhantomData;
+use hashbrown::hash_map;
 use rocksdb::DB;
 use starknet_types_core::{felt::Felt, hash::StarkHash};
 use std::collections::HashMap;
@@ -63,6 +64,12 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         proof: MultiProof,
         original_root: Felt,
     ) -> Result<Felt, PartialTrieError> {
+        if value == Felt::ZERO {
+            // return self.delete_leaf(db, key);
+            !unimplemented!()
+        }
+        println!("Setting value: {:?}", value);
+        println!("Setting Key: {:?}", key);
         //Traverse tree insert nodes and return path
         let path_nodes = self
             .get_partial_path_from_existing_trie(&key, proof, original_root, db)
@@ -97,6 +104,24 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         println!("{:?}\n", path_nodes);
 
         let key_bytes = bitslice_to_bytes(key);
+        // let mut cache_leaf_entry = self.trie.cache_leaf_modified.entry_ref(&key_bytes[..]);
+
+        // if let hash_map::EntryRef::Occupied(entry) = &mut cache_leaf_entry {
+        //     if matches!(entry.get(), InsertOrRemove::Insert(_)) {
+        //         entry.insert(InsertOrRemove::Insert(value));
+        //         let root_node = self.trie.proof_nodes.get(self.trie.current_root_node_id.unwrap()).unwrap();
+        //         match root_node {
+        //             PartialTrieNode::Binary(binary) => {
+        //                 let root_hash = hash_binary_node::<H>(binary.left.as_hash().unwrap(), binary.right.as_hash().unwrap());
+        //                 return Ok(root_hash);
+        //             }
+        //             PartialTrieNode::Edge(edge) => {
+        //                 let root_hash = hash_edge_node::<H>(&edge.path, value);
+        //                 return Ok(root_hash);
+        //             }
+        //         }
+        //     }
+        // }
 
         match path_nodes.last() {
             Some((node_key, height)) => {
@@ -112,6 +137,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 let edge_node_hash = hash_edge_node::<H>(&Path(key.to_bitvec()), value);
                 let edge_node = PartialTrieNode::Edge(EdgePartialTrieNode {
                     path: Path(key.to_bitvec()),
+                    height: 0,
                     child: ProofNodeHandle::Hash(value),
                     child_handle: ProofNodeHandle::Hash(Felt::ZERO),
                 });
@@ -145,22 +171,24 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         match &mut node {
             PartialTrieNode::Edge(edge) => {
                 println!("Building edge node");
-                let common = common_path(&edge.path, height as usize, key);
-                let branch_height = height as usize + common.len();
+                let common = edge.common_path(key);
+                let branch_height = edge.height as usize + common.len();
 
                 println!("Branch height: {:?}", branch_height);
                 println!("Key length: {:?}", key.len());
-                if branch_height >= key.len() {
+                println!("Common: {:?}", common);
+                println!("Edge path: {:?}", edge.path);
+                println!("Height: {:?}", height);
+                if branch_height == key.len() {
                     println!("We are at the leaf node - lets update it");
                     let key_bytes = bitslice_to_bytes(key);
+                    edge.child = ProofNodeHandle::Hash(value);
                     self.trie
                         .cache_leaf_modified
                         .insert(key_bytes, InsertOrRemove::Insert(value));
-                    edge.child = ProofNodeHandle::Hash(value);
-
                     let final_hash = self.hash_up_merkle_path(key, value, path_nodes, false);
-                    self.trie.proof_nodes[*node_key] = node.clone();
-                    return Ok((final_hash, node.clone()));
+                    // self.trie.proof_nodes[*node_key] = node;
+                    return Ok((final_hash, node));
                 }
 
                 let child_height = branch_height + 1;
@@ -180,6 +208,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                     let edge_hash = hash_edge_node::<H>(&Path(new_path.clone()), value);
                     let edge_node = PartialTrieNode::Edge(EdgePartialTrieNode {
                         path: Path(new_path),
+                        height: child_height as u64,
                         child: ProofNodeHandle::Hash(value),
                         child_handle: ProofNodeHandle::Hash(Felt::ZERO),
                     });
@@ -201,6 +230,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                     //Children should be probably none as they are leafs
                     let edge_node = PartialTrieNode::Edge(EdgePartialTrieNode {
                         path: Path(old_path),
+                        height: child_height as u64,
                         child: edge.child,
                         child_handle: ProofNodeHandle::Hash(Felt::ZERO),
                     });
@@ -214,17 +244,13 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 };
 
                 let new_direction = Direction::from(key[branch_height]);
-                let (left_child, right_child) = match new_direction {
-                    Direction::Left => (new_id, old_id),
-                    Direction::Right => (old_id, new_id),
-                };
-
-                let (left, right) = match new_direction {
-                    Direction::Left => (new_hash, old_hash),
-                    Direction::Right => (old_hash, new_hash),
+                let ((left, left_child), (right, right_child)) = match new_direction {
+                    Direction::Left => ((new_hash, new_id), (old_hash, old_id)),
+                    Direction::Right => ((old_hash, old_id), (new_hash, new_id)),
                 };
 
                 let branch = PartialTrieNode::Binary(BinaryPartialTrieNode {
+                    height: branch_height as u64,
                     left: left,
                     right: right,
                     left_handle: left_child,
@@ -260,6 +286,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
 
                     let new_node = PartialTrieNode::Edge(EdgePartialTrieNode {
                         path: Path(common.to_bitvec()),
+                        height: edge.height,
                         child: ProofNodeHandle::Hash(branch_hash),
                         child_handle: ProofNodeHandle::InMemory(branch_node_key),
                     });
@@ -286,38 +313,28 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 Ok((final_hash, node))
             }
             PartialTrieNode::Binary(binary) => {
-                let child_height = height + 1;
-                let direction = Direction::from(key[height as usize]);
+                let child_height = binary.height + 1;
+                let direction = Direction::from(key[binary.height as usize]);
+
+                println!("Binary node: {:?}", binary);
 
                 if child_height as usize == key.len() {
-                    let (current_hash, new_node) = match direction {
+                    let current_hash = match direction {
                         Direction::Left => {
                             //we return proof node to update binary node in proof_nodes
                             let binary_node =
                                 hash_binary_node::<H>(value, binary.right.as_hash().unwrap());
-                            (
-                                binary_node,
-                                PartialTrieNode::Binary(BinaryPartialTrieNode {
-                                    left: ProofNodeHandle::Hash(value),              //LEAFS
-                                    right: binary.right,                             //LEAFS
-                                    left_handle: ProofNodeHandle::Hash(Felt::ZERO),  //LEAFS
-                                    right_handle: ProofNodeHandle::Hash(Felt::ZERO), //LEAFS
-                                }),
-                            )
+                            binary.left = ProofNodeHandle::Hash(value);
+
+                            binary_node
                         }
                         Direction::Right => {
                             //we return proof node to update binary node in proof_nodes
                             let binary_node =
                                 hash_binary_node::<H>(binary.left.as_hash().unwrap(), value);
-                            (
-                                binary_node,
-                                PartialTrieNode::Binary(BinaryPartialTrieNode {
-                                    left: binary.left,                               //LEAFS
-                                    right: ProofNodeHandle::Hash(value),             //LEAFS
-                                    left_handle: ProofNodeHandle::Hash(Felt::ZERO),  //LEAFS
-                                    right_handle: ProofNodeHandle::Hash(Felt::ZERO), //LEAFS
-                                }),
-                            )
+                            binary.right = ProofNodeHandle::Hash(value);
+
+                            binary_node
                         }
                     };
                     let key_bytes = bitslice_to_bytes(key);
@@ -325,8 +342,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                         .cache_leaf_modified
                         .insert(key_bytes, InsertOrRemove::Insert(value));
 
-                    node = new_node;
-
+                    println!("Binary node after update: {:?}", binary);
                     let final_hash = self.hash_up_merkle_path(key, current_hash, path_nodes, true);
                     Ok((final_hash, node))
                 } else {
@@ -478,10 +494,16 @@ mod tests {
     fn arb_key_value(max_height: u8) -> impl Strategy<Value = (BitVec, Felt)> {
         (
             prop::collection::vec(any::<bool>(), max_height as usize),
-            u8::ANY,
+            (1..=254u8),
         )
-            .prop_map(|(bits, v)| {
-                let key = bits.into_iter().collect();
+            .prop_map(move |(bits, v)| {
+                let mut key = BitVec::with_capacity(max_height as usize);
+                key.extend(bits);
+                debug_assert_eq!(
+                    key.len(),
+                    max_height as usize,
+                    "Key length must match max_height"
+                );
                 let value = Felt::from(v as u64 + 100);
                 (key, value)
             })
@@ -1238,7 +1260,7 @@ mod tests {
         #[test]
         fn test_next_root_multiple_calls_height_2_only(
             initial_keys_values in arb_power_of_two_keys(2),
-            new_keys_values in vec(arb_key_value(2), 1..2),
+            new_keys_values in vec(arb_key_value(2), 1..5),
         ) {
             println!("Initial keys: {:?}", initial_keys_values);
         println!("New keys: {:?}", new_keys_values);
@@ -1683,14 +1705,13 @@ mod tests {
 
         let mut id_builder = BasicIdBuilder::new();
 
-        let three = bits![u8, Msb0; 1, 1];
+        let one = bits![u8, Msb0; 1, 1];
+        let two = bits![u8, Msb0; 1, 0];
 
         // Klucze początkowe
-        let initial_keys = vec![
-            three, // [1,1]
-        ];
+        let initial_keys = vec![one, two];
 
-        let initial_values = vec![Felt::from(0x1)];
+        let initial_values = vec![Felt::from(0x65), Felt::from(0x65)];
 
         for (key, value) in initial_keys.iter().zip(initial_values.iter()) {
             base_bonsai_storage
@@ -1715,8 +1736,12 @@ mod tests {
             .or_insert_with(|| MerkleTree::new(base_identifier.clone().into(), 2));
 
         // Nowy klucz do dodania - ten sam co w oryginalnym teście
-        let new_key = bits![u8, Msb0; 1, 1]; // [1,1]
-        let new_value = Felt::from(0x1); // 260
+        let new_key = bits![u8, Msb0; 1, 0];
+        let new_value = Felt::from(0x66); // 260
+
+        // Nowy klucz do dodania - ten sam co w oryginalnym teście
+        let new_key2 = bits![u8, Msb0; 1, 0];
+        let new_value2 = Felt::from(0x67); // 260
 
         let proof_keys = vec![&new_key];
         let proof = tree1
@@ -1724,6 +1749,7 @@ mod tests {
             .unwrap();
         println!("Proof: {:?}", proof);
 
+        println!("\nFIRST ITERATION\n");
         let calculated_root = partial_trie
             .set(
                 &mut fork_bonsai_storage.tries.db,
@@ -1735,9 +1761,33 @@ mod tests {
             .unwrap();
         println!("Calculated root: {:?}", calculated_root);
 
+        let proof_keys2 = vec![&new_key2];
+        let proof2 = tree1
+            .get_multi_proof(&base_bonsai_storage.tries.db, proof_keys2.iter())
+            .unwrap();
+        println!("Proof2: {:?}", proof2);
+
+        println!("\nSECOND ITERATION\n");
+        let calculated_root = partial_trie
+            .set(
+                &mut fork_bonsai_storage.tries.db,
+                &new_key2,
+                new_value2,
+                proof2,
+                original_root,
+            )
+            .unwrap();
+        println!("Calculated root: {:?}", calculated_root);
+
         // Dodaj nowy klucz do referencyjnego drzewa
         reference_bonsai_storage
             .insert(&reference_identifier, &new_key, &new_value)
+            .unwrap();
+        reference_bonsai_storage
+            .commit(id_builder.new_id())
+            .unwrap();
+        reference_bonsai_storage
+            .insert(&reference_identifier, &new_key2, &new_value2)
             .unwrap();
         reference_bonsai_storage
             .commit(id_builder.new_id())

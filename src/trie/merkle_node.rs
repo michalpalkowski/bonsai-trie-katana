@@ -77,6 +77,7 @@ pub enum PartialTrieNode {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BinaryPartialTrieNode {
+    pub height: u64,
     pub left: ProofNodeHandle,
     pub right: ProofNodeHandle,
     pub left_handle: ProofNodeHandle,
@@ -108,13 +109,14 @@ impl BinaryPartialTrieNode {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EdgePartialTrieNode {
     pub path: Path,
+    pub height: u64,
     pub child: ProofNodeHandle,
     pub child_handle: ProofNodeHandle,
 }
 
 impl EdgePartialTrieNode {
     pub fn path_matches(&self, key: &BitSlice, node_height: usize) -> bool {
-        // assert_eq!(self.height as usize, node_height);
+        assert_eq!(self.height as usize, node_height);
         let lower_bound = node_height.min(key.len());
         let upper_bound = (node_height + self.path.0.len()).min(key.len());
         log::trace!(
@@ -125,6 +127,15 @@ impl EdgePartialTrieNode {
             self.path.len()
         );
         self.path.starts_with(&key[lower_bound..upper_bound])
+    }
+    pub fn common_path(&self, key: &BitSlice) -> &BitSlice {
+        let key_path = key.iter().skip(self.height as usize);
+        let common_length = key_path
+            .zip(self.path.0.iter())
+            .take_while(|(a, b)| a == b)
+            .count();
+
+        &self.path.0[..common_length]
     }
 }
 
