@@ -3,14 +3,15 @@ use super::{
     path::Path,
     tree::{MerkleTree, NodeKey, ProofNodeChildren, RootHandle},
 };
+use crate::trie::merkle_node::PartialTrieNode;
+use crate::trie::merkle_node::{EdgePartialTrieNode, ProofNodeHandle};
 use crate::{
-    id::Id, key_value_db::KeyValueDB, trie::merkle_node::BinaryPartialTrieNode, BitSlice, BonsaiDatabase, BonsaiStorageError, MultiProof, ProofNode, Vec
+    id::Id, key_value_db::KeyValueDB, trie::merkle_node::BinaryPartialTrieNode, BitSlice,
+    BonsaiDatabase, BonsaiStorageError, MultiProof, ProofNode, Vec,
 };
 use core::{fmt, marker::PhantomData};
 use starknet_types_core::{felt::Felt, hash::StarkHash};
 use std::collections::HashMap;
-use crate::trie::merkle_node::PartialTrieNode;
-use crate::trie::merkle_node::{ProofNodeHandle, EdgePartialTrieNode};
 
 /// This trait's function will be called on every node visited during a seek operation.
 pub trait NodeVisitor<H: StarkHash> {
@@ -289,10 +290,10 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         let current_path_len = self.current_path.len();
         let current_path_len_at_beginning = self.current_path.len().clone();
 
-        let partial_trie_node= self.tree.get_proof_node_mut::<DB>(node_id)?;
+        let partial_trie_node = self.tree.get_proof_node_mut::<DB>(node_id)?;
         // let path_matches = partial_trie_node.path_matches(key, height);
 
-        let (proof_node_child,proof_node_handle, path_matches) = match partial_trie_node {
+        let (proof_node_child, proof_node_handle, path_matches) = match partial_trie_node {
             PartialTrieNode::Binary(binary_node) => {
                 log::trace!(
                     "Continue from binary node current_path={:?} key={:b}",
@@ -301,11 +302,19 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
                 );
                 let next_direction = Direction::from(key[self.current_path.len()]);
                 self.current_path.push(bool::from(next_direction));
-                (binary_node.get_child(next_direction), binary_node.get_child_handle(next_direction), true)
+                (
+                    binary_node.get_child(next_direction),
+                    binary_node.get_child_handle(next_direction),
+                    true,
+                )
             }
             PartialTrieNode::Edge(edge_node) => {
                 self.current_path.extend_from_bitslice(&edge_node.path);
-                (edge_node.child, edge_node.child_handle, edge_node.path_matches(key, height))
+                (
+                    edge_node.child,
+                    edge_node.child_handle,
+                    edge_node.path_matches(key, height),
+                )
             }
         };
 
@@ -313,7 +322,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         if !path_matches || self.current_path.len() >= key.len() {
             println!("Child: {:?}", proof_node_handle.as_hash());
             self.leaf_hash = if path_matches && self.current_path.len() == key.len() {
-               proof_node_handle.as_hash()
+                proof_node_handle.as_hash()
             } else {
                 None
             };
@@ -322,7 +331,11 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         }
 
         println!("Proof node handle: {:?}", proof_node_handle);
-        let next_node_id = self.tree.load_proof_node_handle::<DB, ID>(self.db, proof_node_handle, &self.current_path)?;
+        let next_node_id = self.tree.load_proof_node_handle::<DB, ID>(
+            self.db,
+            proof_node_handle,
+            &self.current_path,
+        )?;
         println!("Next node id: {:?}", next_node_id);
         if let Some(existing_node_id) = next_node_id {
             // I THINK THIS MIGHT BE THE BUG BECAUSE WE HAVE NONE ON A LEAF HERE
@@ -368,13 +381,10 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
                 }
             };
 
-            let new_node_id = self
-                .tree
-                .proof_nodes
-                .insert(child);
+            let new_node_id = self.tree.proof_nodes.insert(child);
 
             // Update children reference in parent node
-          
+
             match self.tree.get_proof_node_mut::<DB>(node_id)? {
                 PartialTrieNode::Binary(binary_node) => {
                     *binary_node.get_child_handle_mut(Direction::from(
@@ -467,11 +477,8 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
                             })
                         }
                     };
-        
-                    let root_node_id = self
-                        .tree
-                        .proof_nodes
-                        .insert(partial_root_node);
+
+                    let root_node_id = self.tree.proof_nodes.insert(partial_root_node);
 
                     println!("Created root node in tree: {:?}", root_node_id);
                     self.tree.current_root_node_id = Some(root_node_id);

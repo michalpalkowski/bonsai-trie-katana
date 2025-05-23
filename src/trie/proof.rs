@@ -12,6 +12,7 @@ use super::{
     path::Path,
     tree::{MerkleTree, ProofNodeChildren},
 };
+use crate::trie::merkle_node::PartialTrieNode;
 use crate::{
     id::Id,
     key_value_db::KeyValueDB,
@@ -25,7 +26,6 @@ use crate::{
 use core::{marker::PhantomData, mem, ops::DerefMut};
 use hashbrown::hash_set;
 use starknet_types_core::{felt::Felt, hash::StarkHash};
-use crate::trie::merkle_node::PartialTrieNode;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProofVerificationError {
@@ -267,9 +267,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                 _prev_height: usize,
             ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
                 let proof_node = tree.get_proof_node_mut::<DB>(node_id)?;
-                self.0
-                     .0
-                    .insert(node_id, proof_node.clone());
+                self.0 .0.insert(node_id, proof_node.clone());
                 Ok(())
             }
         }
