@@ -68,14 +68,10 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
             // return self.delete_leaf(db, key);
             !unimplemented!()
         }
-        println!("Setting value: {:?}", value);
-        println!("Setting Key: {:?}", key);
         //Traverse tree insert nodes and return path
         let path_nodes = self
             .get_partial_path_from_existing_trie(&key, proof, original_root, db)
             .unwrap();
-
-        println!("PATH NODES: {:?}\n", path_nodes);
 
         //Build tree from visited nodes
         let calculated_root = self
@@ -100,29 +96,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         value: Felt,
         db: &mut KeyValueDB<RocksDB<BasicId>, BasicId>,
     ) -> Result<Felt, PartialTrieError> {
-        println!("---------VISITED NODES-----------");
-        println!("{:?}\n", path_nodes);
-
         let key_bytes = bitslice_to_bytes(key);
-        // let mut cache_leaf_entry = self.trie.cache_leaf_modified.entry_ref(&key_bytes[..]);
-
-        // if let hash_map::EntryRef::Occupied(entry) = &mut cache_leaf_entry {
-        //     if matches!(entry.get(), InsertOrRemove::Insert(_)) {
-        //         entry.insert(InsertOrRemove::Insert(value));
-        //         let root_node = self.trie.proof_nodes.get(self.trie.current_root_node_id.unwrap()).unwrap();
-        //         match root_node {
-        //             PartialTrieNode::Binary(binary) => {
-        //                 let root_hash = hash_binary_node::<H>(binary.left.as_hash().unwrap(), binary.right.as_hash().unwrap());
-        //                 return Ok(root_hash);
-        //             }
-        //             PartialTrieNode::Edge(edge) => {
-        //                 let root_hash = hash_edge_node::<H>(&edge.path, value);
-        //                 return Ok(root_hash);
-        //             }
-        //         }
-        //     }
-        // }
-
         match path_nodes.last() {
             Some((node_key, height)) => {
                 let (current_hash, node) =
@@ -170,17 +144,10 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
 
         match &mut node {
             PartialTrieNode::Edge(edge) => {
-                println!("Building edge node");
                 let common = edge.common_path(key);
                 let branch_height = edge.height as usize + common.len();
 
-                println!("Branch height: {:?}", branch_height);
-                println!("Key length: {:?}", key.len());
-                println!("Common: {:?}", common);
-                println!("Edge path: {:?}", edge.path);
-                println!("Height: {:?}", height);
                 if branch_height == key.len() {
-                    println!("We are at the leaf node - lets update it");
                     let key_bytes = bitslice_to_bytes(key);
                     edge.child = ProofNodeHandle::Hash(value);
                     self.trie
@@ -259,28 +226,11 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 let branch_hash =
                     hash_binary_node::<H>(left.as_hash().unwrap(), right.as_hash().unwrap());
 
-                println!("Left: {:?}, Right: {:?}", left, right);
-                println!(
-                    "Left child: {:?}, Right child: {:?}",
-                    left_child, right_child
-                );
-
                 let (current_hash, new_node) = if common.is_empty() {
-                    //here we dont want to create new node but we want to update the old one as in set() tree.rs
-                    //read below for more details
-                    println!("Returning binary node ONLY {:?}", branch);
                     (branch_hash, branch)
                 } else {
                     let edge_node_hash =
                         hash_edge_node::<H>(&Path(common.to_bitvec()), branch_hash);
-                    //here we dont want to create new node but we want to update the old one as in set() tree.rs
-                    //there are two cases:
-                    //if common is empy we update node as binary_node
-                    //else we update node as edge node, also, we need to create ProofNode structures here with updates values
-                    //and then update correct NodeKey
-
-                    //here we want to insert new node as we just created it and it will be a child of edge node as in tree.rs
-                    // we will use branch_node_key as a child of higher edge node
                     let branch_node_key = self.trie.proof_nodes.insert(branch);
 
                     let new_node = PartialTrieNode::Edge(EdgePartialTrieNode {
@@ -294,16 +244,8 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                     (edge_node_hash, new_node)
                 };
 
-                //these are the children of higher edge node so it should be inserted binary node
-                //or if there is no higher edge node then childs should be egde nodes inserted
-                //under binary node else there are leafs so children should be None as we do not insert them as nodes
                 node = new_node;
 
-                println!("Path nodes: {:?}\n", path_nodes);
-                println!(
-                    "Current hash before hash_up_merkle_path: {:?}",
-                    current_hash
-                );
                 let final_hash = self.hash_up_merkle_path(key, current_hash, path_nodes, true);
 
                 let key_bytes = bitslice_to_bytes(&key[..height as usize]);
@@ -314,8 +256,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
             PartialTrieNode::Binary(binary) => {
                 let child_height = binary.height + 1;
                 let direction = Direction::from(key[binary.height as usize]);
-
-                println!("Binary node: {:?}", binary);
 
                 if child_height as usize == key.len() {
                     let current_hash = match direction {
@@ -341,7 +281,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                         .cache_leaf_modified
                         .insert(key_bytes, InsertOrRemove::Insert(value));
 
-                    println!("Binary node after update: {:?}", binary);
                     let final_hash = self.hash_up_merkle_path(key, current_hash, path_nodes, true);
                     Ok((final_hash, node))
                 } else {
@@ -360,13 +299,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         path_nodes: &[(NodeKey, usize)],
         skip_last: bool,
     ) -> Felt {
-        println!("Path nodes in hash_up_merkle_path: {:?}\n", path_nodes);
-        println!(
-            "Initial current_hash: {:?}, height: {}",
-            current_hash,
-            path_nodes.last().unwrap().1
-        );
-
         let mut nodes = path_nodes.iter().rev().skip(if skip_last { 1 } else { 0 });
 
         self.hash_up_recursive(key, current_hash, &mut nodes)
@@ -386,12 +318,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
             let node = self.trie.proof_nodes.get(*node_key).unwrap().clone();
             match node {
                 PartialTrieNode::Binary(binary) => {
-                    println!("PROCESSING BINARY NODE");
-                    //HERE IS THE PROBLEM
-                    println!(
-                        "Left leaf: {:?}, Right leaf: {:?}",
-                        binary.left, binary.right
-                    );
                     let direction = Direction::from(key[*height as usize]);
                     let new_hash = match direction {
                         Direction::Left => {
@@ -399,7 +325,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                                 current_hash,
                                 binary.right.as_hash().unwrap(),
                             );
-                            println!("New binary hash (left): {:?}", binary_node);
                             self.trie.proof_nodes[*node_key] =
                                 PartialTrieNode::Binary(BinaryPartialTrieNode {
                                     left: ProofNodeHandle::Hash(current_hash),
@@ -410,7 +335,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                         Direction::Right => {
                             let binary_node =
                                 hash_binary_node::<H>(binary.left.as_hash().unwrap(), current_hash);
-                            println!("New binary hash (right): {:?}", binary_node);
                             self.trie.proof_nodes[*node_key] =
                                 PartialTrieNode::Binary(BinaryPartialTrieNode {
                                     right: ProofNodeHandle::Hash(current_hash),
@@ -423,7 +347,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 }
                 PartialTrieNode::Edge(edge) => {
                     let edge_node = hash_edge_node::<H>(&edge.path, current_hash);
-                    println!("New edge hash: {:?}", edge_node);
                     self.trie.proof_nodes[*node_key] = PartialTrieNode::Edge(EdgePartialTrieNode {
                         path: edge.path.clone(),
                         child: ProofNodeHandle::Hash(current_hash),
@@ -503,7 +426,7 @@ mod tests {
                     max_height as usize,
                     "Key length must match max_height"
                 );
-                let value = Felt::from(v as u64 + 100);
+                let value = Felt::from(v as u64 + 1);
                 (key, value)
             })
     }
@@ -539,51 +462,51 @@ mod tests {
     proptest! {
         #![proptest_config(ProptestConfig::default())]
         #[test]
-        fn test_next_root_height_8(
+        fn test_set_root_height_8(
             initial_keys_values in arb_power_of_two_keys(8),
         ) {
             let (removed_key, removed_value, remaining_keys_values) =
                 select_random_key_value_from_initial_keys(initial_keys_values);
-            test_next_root(8, remaining_keys_values, removed_key, removed_value);
+            test_set_root(8, remaining_keys_values, removed_key, removed_value);
         }
     }
 
     proptest! {
         #![proptest_config(ProptestConfig::default())]
         #[test]
-        fn test_next_root_height_24(
+        fn test_set_root_height_24(
             initial_keys_values in arb_power_of_two_keys(24),
         ) {
             let (removed_key, removed_value, remaining_keys_values) =
                 select_random_key_value_from_initial_keys(initial_keys_values);
-            test_next_root(24, remaining_keys_values, removed_key, removed_value);
+            test_set_root(24, remaining_keys_values, removed_key, removed_value);
         }
     }
 
     proptest! {
         #![proptest_config(ProptestConfig::default())]
         #[test]
-        fn test_next_root_height_251(
+        fn test_set_root_height_251(
             initial_keys_values in vec(arb_key_value(251), 1..50),
         ) {
             let (removed_key, removed_value, remaining_keys_values) =
                 select_random_key_value_from_initial_keys(initial_keys_values);
-            test_next_root(251, remaining_keys_values, removed_key, removed_value);
+            test_set_root(251, remaining_keys_values, removed_key, removed_value);
         }
     }
 
     proptest! {
         #![proptest_config(ProptestConfig::default())]
         #[test]
-        fn test_next_root_empty_initial(
+        fn test_set_root_empty_initial(
             new_key in arb_key(8),
             new_value in arb_value(),
         ) {
-            test_next_root(8, vec![], new_key, new_value);
+            test_set_root(8, vec![], new_key, new_value);
         }
     }
 
-    fn test_next_root(
+    fn test_set_root(
         height: u8,
         initial_keys_values: Vec<(BitVec, Felt)>,
         new_key: BitVec,
@@ -649,7 +572,6 @@ mod tests {
                 current_root,
             )
             .unwrap();
-        println!("Partial path: {:?}\n", partial_path);
 
         let calculated_root = partial_trie
             .build_from_visited_nodes(
@@ -659,7 +581,6 @@ mod tests {
                 &mut bonsai_storage1.tries.db,
             )
             .unwrap();
-        println!("Calculated root: {:?}", calculated_root);
 
         // Commit initial state of storage2
         let id2 = id_builder.new_id();
@@ -687,7 +608,7 @@ mod tests {
     }
 
     #[test]
-    fn test_next_root_specific_edge_cases() {
+    fn test_set_root_specific_edge_cases() {
         let heights = [8, 24, 251];
 
         for height in heights {
@@ -702,7 +623,7 @@ mod tests {
             for _ in 0..height {
                 empty_key.push(false);
             }
-            test_next_root(
+            test_set_root(
                 height,
                 initial_keys_values.clone(),
                 empty_key,
@@ -714,7 +635,7 @@ mod tests {
             for _ in 0..height {
                 full_key.push(true);
             }
-            test_next_root(
+            test_set_root(
                 height,
                 initial_keys_values.clone(),
                 full_key,
@@ -726,7 +647,7 @@ mod tests {
             for i in 0..height {
                 alt_key.push(i % 2 == 0);
             }
-            test_next_root(
+            test_set_root(
                 height,
                 initial_keys_values.clone(),
                 alt_key,
@@ -739,7 +660,7 @@ mod tests {
                 for i in 0..height {
                     single_bit_key.push(i == pos);
                 }
-                test_next_root(
+                test_set_root(
                     height,
                     initial_keys_values.clone(),
                     single_bit_key,
@@ -753,122 +674,12 @@ mod tests {
             for _ in 1..height {
                 key.push(false);
             }
-            test_next_root(height, initial_keys_values.clone(), key, Felt::from(600));
+            test_set_root(height, initial_keys_values.clone(), key, Felt::from(600));
         }
     }
 
     #[test]
-    fn test_next_root_single_case() {
-        let db = create_rocks_db(tempfile::tempdir().unwrap().path()).unwrap();
-        let identifier = vec![1];
-        let identifier2 = vec![2];
-
-        let config = BonsaiStorageConfig::default();
-        let mut bonsai_storage1: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-            BonsaiStorage::new(
-                RocksDB::new(&db, RocksDBConfig::default()),
-                config.clone(),
-                24,
-            );
-        let mut bonsai_storage2: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-            BonsaiStorage::new(
-                RocksDB::new(&db, RocksDBConfig::default()),
-                config.clone(),
-                24,
-            );
-        let mut bonsai_storage3: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-            BonsaiStorage::new(
-                RocksDB::new(&db, RocksDBConfig::default()),
-                config.clone(),
-                24,
-            );
-
-        let mut id_builder = BasicIdBuilder::new();
-
-        for i in 0..5 {
-            let mut key = vec![0; 3];
-            key[0] = i;
-            let value = Felt::from(i as u64 + 100);
-            bonsai_storage1
-                .insert(&identifier, &BitVec::from_vec(key.clone()), &value)
-                .unwrap();
-            bonsai_storage2
-                .insert(&identifier2, &BitVec::from_vec(key), &value)
-                .unwrap();
-        }
-
-        let id1 = id_builder.new_id();
-        bonsai_storage1.commit(id1).unwrap();
-        let current_root = bonsai_storage1.root_hash(&identifier).unwrap();
-
-        let mut new_key = vec![0; 3];
-        new_key[0] = 5;
-        let new_value = Felt::from(105);
-        let new_key_bv = BitVec::from_vec(new_key.clone());
-
-        let tree1 = bonsai_storage1
-            .tries
-            .trees
-            .entry(smallvec::smallvec![1])
-            .or_insert_with(|| MerkleTree::new(identifier.clone().into(), 24));
-
-        let proof_keys = vec![&new_key_bv];
-        let proof = tree1
-            .get_multi_proof(&bonsai_storage1.tries.db, proof_keys.iter())
-            .unwrap();
-
-        let partial_trie_identifier = vec![3];
-        let mut partial_trie =
-            PartialTrie::<Pedersen>::new(partial_trie_identifier.into(), 24, current_root);
-
-        let (partial_path, path_nodes) = partial_trie
-            .trie
-            .get_partial_path(
-                &bonsai_storage3.tries.db,
-                proof_keys.iter(),
-                proof,
-                current_root,
-            )
-            .unwrap();
-        println!("Partial path: {:?}\n", partial_path);
-
-        let calculated_root = partial_trie
-            .build_from_visited_nodes(
-                path_nodes,
-                &new_key_bv,
-                new_value,
-                &mut bonsai_storage1.tries.db,
-            )
-            .unwrap();
-        println!("Calculated root: {:?}", calculated_root);
-
-        // Commit initial state of storage2
-        let id2 = id_builder.new_id();
-        bonsai_storage2.commit(id2).unwrap();
-        println!(
-            "Initial storage2 root: {:?}",
-            bonsai_storage2.root_hash(&identifier2).unwrap()
-        );
-
-        // Insert new value and commit
-        bonsai_storage2
-            .insert(&identifier2, &new_key_bv, &new_value)
-            .unwrap();
-
-        let id3 = id_builder.new_id();
-        bonsai_storage2.commit(id3).unwrap();
-        let expected_root = bonsai_storage2.root_hash(&identifier2).unwrap();
-        println!("Final expected root: {:?}", expected_root);
-
-        assert_eq!(
-            calculated_root, expected_root,
-            "Roots don't match: calculated={:?}, expected={:?}",
-            calculated_root, expected_root
-        );
-    }
-
-    #[test]
-    fn test_next_root_multiple_calls_single_test_height_8() {
+    fn test_set_root_multiple_calls_single_test_height_8() {
         let base_path = tempfile::tempdir().unwrap().path().to_path_buf();
         let base_db = create_rocks_db(&base_path).unwrap();
 
@@ -923,9 +734,9 @@ mod tests {
         let seven = bits![u8, Msb0; 1,1,1,0,0,0,0,0];
         let eight = bits![u8, Msb0; 0,0,0,1,0,0,0,0];
         let nine = bits![u8,  Msb0; 1,0,0,1,0,0,0,0];
-        // let ten = bits![u8,   Msb0; 0,0,0,0,1,0,1,0];
-        // let eleven = bits![u8,Msb0; 0,0,0,0,1,0,1,1];
-        // let twelve = bits![u8,Msb0; 0,0,0,0,1,1,0,0];
+        let ten = bits![u8,   Msb0; 0,0,0,0,1,0,1,0];
+        let eleven = bits![u8,Msb0; 0,0,0,0,1,0,1,1];
+        let twelve = bits![u8,Msb0; 0,0,0,0,1,1,0,0];
 
         // let keys = vec![one, two, three, four, five, six, seven, eight, nine, ten, eleven, twelve];
         let keys = vec![one, two, three, four, five];
@@ -935,13 +746,13 @@ mod tests {
             Felt::from(3),
             Felt::from(4),
             Felt::from(5),
-            // Felt::from(6),
-            // Felt::from(7),
-            // Felt::from(8),
-            // Felt::from(9),
-            // Felt::from(10),
-            // Felt::from(11),
-            // Felt::from(12),
+            Felt::from(6),
+            Felt::from(7),
+            Felt::from(8),
+            Felt::from(9),
+            Felt::from(10),
+            Felt::from(11),
+            Felt::from(12),
         ];
 
         for (key, value) in keys.iter().zip(values.iter()).take(3) {
@@ -1084,234 +895,64 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_next_root_multiple_calls_single_test_height_24() {
-        let db = create_rocks_db(tempfile::tempdir().unwrap().path()).unwrap();
-        let identifier = vec![1];
-        let identifier2 = vec![2];
-        let identifier3 = vec![3];
-        let identifier4 = vec![4];
-
-        let config = BonsaiStorageConfig::default();
-        let mut base_tree: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-            BonsaiStorage::new(
-                RocksDB::new(&db, RocksDBConfig::default()),
-                config.clone(),
-                24,
-            );
-        let mut tree_to_compare: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-            BonsaiStorage::new(
-                RocksDB::new(&db, RocksDBConfig::default()),
-                config.clone(),
-                24,
-            );
-        let mut reference_tree: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-            BonsaiStorage::new(
-                RocksDB::new(&db, RocksDBConfig::default()),
-                config.clone(),
-                24,
-            );
-        let mut fork_tree: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-            BonsaiStorage::new(
-                RocksDB::new(&db, RocksDBConfig::default()),
-                config.clone(),
-                24,
-            );
-
-        let mut id_builder = BasicIdBuilder::new();
-
-        let one = bits![u8, Msb0; 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1];
-        let two = bits![u8, Msb0; 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0];
-        let three = bits![u8, Msb0; 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1];
-        let four = bits![u8, Msb0; 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0];
-        let five = bits![u8, Msb0; 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,1];
-        let six = bits![u8, Msb0; 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0];
-        let seven = bits![u8, Msb0; 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1];
-        let eight = bits![u8, Msb0; 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,];
-        let nine = bits![u8, Msb0; 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1];
-        let ten = bits![u8, Msb0; 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,1,0];
-        let eleven = bits![u8, Msb0; 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,1,1];
-        let twelve = bits![u8, Msb0; 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0];
-
-        let keys = vec![
-            one, two, three, four, five, six, seven, eight, nine, ten, eleven, twelve,
-        ];
-
-        let values = vec![
-            Felt::from(1),
-            Felt::from(2),
-            Felt::from(3),
-            Felt::from(4),
-            Felt::from(5),
-            Felt::from(6),
-            Felt::from(7),
-            Felt::from(8),
-            Felt::from(9),
-            Felt::from(10),
-            Felt::from(11),
-            Felt::from(12),
-        ];
-
-        for (key, value) in keys.iter().zip(values.iter()).take(6) {
-            println!("Inserting key: {:?}", key);
-            println!("Inserting value: {:?}", value);
-            base_tree.insert(&identifier, key, value).unwrap();
-            reference_tree.insert(&identifier3, key, value).unwrap(); // thats a referencje tree
-                                                                      // println!("bonsai trie: {:?}", bonsai_storage1.tries.trees.entry(smallvec::smallvec![1]).unwrap().proof_nodes);
-        }
-
-        let id1 = id_builder.new_id();
-        base_tree.commit(id1).unwrap();
-        let original_root = base_tree.root_hash(&identifier).unwrap();
-
-        let mut partial_trie =
-            PartialTrie::<Pedersen>::new(identifier4.clone().into(), 24, original_root);
-        let mut calculated_roots: Vec<Felt> = Vec::new();
-        let mut i = 0;
-        let mut current_root = original_root;
-
-        let tree1 = base_tree
-            .tries
-            .trees
-            .entry(smallvec::smallvec![1])
-            .or_insert_with(|| MerkleTree::new(identifier.clone().into(), 24));
-
-        for (key, value) in keys.iter().zip(values.iter()).skip(6) {
-            i += 1;
-            println!("ITERATION: {:?}", i);
-
-            let proof_keys = vec![key];
-
-            let proof = tree1
-                .get_multi_proof(&base_tree.tries.db, proof_keys.iter())
-                .unwrap();
-
-            println!("---------PROOF-------");
-            println!("{:?}\n", proof);
-
-            // println!("\ntree: {:?}\n", bonsai_storage1.tries.trees.entry(smallvec::smallvec![1]));
-            reference_tree.insert(&identifier3, key, value).unwrap();
-            println!(
-                "\nTree NODES: {:?}\n",
-                reference_tree
-                    .tries
-                    .trees
-                    .get(&smallvec::smallvec![3])
-                    .unwrap()
-                    .nodes
-                    .iter()
-                    .map(|(k, v)| (k, v))
-                    .collect::<HashMap<_, _>>()
-            );
-            println!(
-                "\nPartialTree NODES before adding new key-value pair: {:?}\n",
-                partial_trie
-                    .trie
-                    .proof_nodes
-                    .iter()
-                    .map(|(k, v)| (k, v))
-                    .collect::<HashMap<_, _>>()
-            );
-            reference_tree.commit(id_builder.new_id()).unwrap();
-
-            let calculated_root = partial_trie
-                .set(&mut fork_tree.tries.db, key, *value, proof, original_root)
-                .unwrap();
-            println!("Calculated root: {:?}\n", calculated_root);
-
-            println!("Partial TRIE: {:?}\n", partial_trie.trie.proof_nodes);
-            println!(
-                "\nPartialTree NODES after adding new key-value pair: {:?}\n",
-                partial_trie
-                    .trie
-                    .proof_nodes
-                    .iter()
-                    .map(|(k, v)| (k, v))
-                    .collect::<HashMap<_, _>>()
-            );
-
-            calculated_roots.push(calculated_root);
-            current_root = calculated_root;
-        }
-
-        for (key, value) in keys.iter().zip(values.iter()) {
-            tree_to_compare.insert(&identifier2, key, value).unwrap();
-        }
-
-        //we update the full trie with new values which we inserted with build_from_visited_nodes() method
-        // just to be sure that we have the correct root
-        tree_to_compare.commit(id_builder.new_id()).unwrap();
-        let proof_keys = vec![keys.last().unwrap()];
-        let proof = tree1
-            .get_multi_proof(&tree_to_compare.tries.db, proof_keys.iter())
-            .unwrap();
-
-        //this proof is made after finishing commit of original full trie, root should be still the same
-        println!("---------PROOF AFTER FINISHING COMMIT for first key -------");
-        println!("{:?}\n", proof);
-
-        let actual_root = tree_to_compare.root_hash(&identifier2).unwrap();
-        assert_eq!(current_root, actual_root, "Next root calculation failed");
-    }
-
     proptest! {
         #![proptest_config(ProptestConfig::default())]
         #[test]
-        fn test_next_root_multiple_calls_height_2_only(
+        fn test_set_root_multiple_calls_height_2_only(
             initial_keys_values in arb_power_of_two_keys(2),
             new_keys_values in vec(arb_key_value(2), 1..5),
         ) {
             println!("Initial keys: {:?}", initial_keys_values);
         println!("New keys: {:?}", new_keys_values);
-            test_next_root_multiple_calls(2, initial_keys_values, new_keys_values);
+            test_set_root_multiple_calls(2, initial_keys_values, new_keys_values);
         }
     }
 
     proptest! {
         #![proptest_config(ProptestConfig::default())]
         #[test]
-        fn test_next_root_multiple_calls_height_4(
+        fn test_set_root_multiple_calls_height_4(
             initial_keys_values in arb_power_of_two_keys(4),
             new_keys_values in vec(arb_key_value(4), 1..5),
         ) {
-            test_next_root_multiple_calls(4, initial_keys_values, new_keys_values);
+            test_set_root_multiple_calls(4, initial_keys_values, new_keys_values);
         }
     }
 
     proptest! {
         #![proptest_config(ProptestConfig::default())]
         #[test]
-        fn test_next_root_multiple_calls_height_8(
+        fn test_set_root_multiple_calls_height_8(
             initial_keys_values in arb_power_of_two_keys(8),
-            new_keys_values in vec(arb_key_value(8), 1..5),
+            new_keys_values in vec(arb_key_value(8), 1..20),
         ) {
-            test_next_root_multiple_calls(8, initial_keys_values, new_keys_values);
+            test_set_root_multiple_calls(8, initial_keys_values, new_keys_values);
         }
     }
 
     proptest! {
         #![proptest_config(ProptestConfig::default())]
         #[test]
-        fn test_next_root_multiple_calls_height_24(
+        fn test_set_root_multiple_calls_height_24(
             initial_keys_values in arb_power_of_two_keys(24),
             new_keys_values in vec(arb_key_value(24), 1..5),
         ) {
-            test_next_root_multiple_calls(24, initial_keys_values, new_keys_values);
+            test_set_root_multiple_calls(24, initial_keys_values, new_keys_values);
         }
     }
 
     proptest! {
         #![proptest_config(ProptestConfig::default())]
         #[test]
-        fn test_next_root_multiple_calls_height_251(
+        fn test_set_root_multiple_calls_height_251(
             initial_keys_values in arb_power_of_two_keys(251),
             new_keys_values in vec(arb_key_value(251), 1..5),
         ) {
-            test_next_root_multiple_calls(251, initial_keys_values, new_keys_values);
+            test_set_root_multiple_calls(251, initial_keys_values, new_keys_values);
         }
     }
 
-    fn test_next_root_multiple_calls(
+    fn test_set_root_multiple_calls(
         height: u8,
         initial_keys_values: Vec<(BitVec, Felt)>,
         new_keys_values: Vec<(BitVec, Felt)>,
@@ -1411,451 +1052,5 @@ mod tests {
                 .unwrap();
             assert_eq!(expected_root, actual_root);
         }
-    }
-
-    #[test]
-    fn test_get_partial_path() {
-        let db = create_rocks_db(tempfile::tempdir().unwrap().path()).unwrap();
-        let identifier = vec![1];
-        let identifier2 = vec![2];
-        let identifier3 = vec![3];
-        let config = BonsaiStorageConfig::default();
-
-        let mut bonsai_storage1: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-            BonsaiStorage::new(
-                RocksDB::new(&db, RocksDBConfig::default()),
-                config.clone(),
-                24,
-            );
-        let mut bonsai_storage2: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-            BonsaiStorage::new(
-                RocksDB::new(&db, RocksDBConfig::default()),
-                config.clone(),
-                24,
-            );
-        let mut bonsai_storage3: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-            BonsaiStorage::new(
-                RocksDB::new(&db, RocksDBConfig::default()),
-                config.clone(),
-                24,
-            );
-
-        let mut id_builder = BasicIdBuilder::new();
-
-        for i in 0..10 {
-            let mut key = vec![0; 3];
-            key[0] = i;
-            let value = Felt::from(i as u64 + 100);
-            let key_bv = BitVec::from_vec(key.clone());
-
-            bonsai_storage1
-                .insert(&identifier, &key_bv, &value)
-                .unwrap();
-            bonsai_storage2
-                .insert(&identifier2, &key_bv, &value)
-                .unwrap();
-        }
-
-        let id1 = id_builder.new_id();
-        bonsai_storage1.commit(id1).unwrap();
-        let current_root = bonsai_storage1.root_hash(&identifier).unwrap();
-        println!("Initial root: {:?}", current_root);
-
-        let mut new_key = vec![0; 3];
-        new_key[0] = 1;
-        let new_value = Felt::from(105);
-        let new_key_bv = BitVec::from_vec(new_key.clone());
-
-        let tree1 = bonsai_storage1
-            .tries
-            .trees
-            .entry(smallvec::smallvec![1])
-            .or_insert_with(|| MerkleTree::new(identifier.clone().into(), 24));
-
-        let proof_keys = vec![&new_key_bv];
-        let proof = tree1
-            .get_multi_proof(&bonsai_storage1.tries.db, proof_keys.iter())
-            .unwrap();
-        println!("_________________________");
-        println!("FULL PROOF: {:?}\n", proof);
-
-        let mut partial_trie =
-            PartialTrie::<Pedersen>::new(identifier3.clone().into(), 24, current_root);
-
-        // Here we get the partial path and the path nodes from original proof and the current root
-        // We use the partial path to build the new partial trie below with build_from_visited_nodes().
-        // We inserted new key-value pair which doesnt exist in original full trie
-        // Now we have partial trie which doesn't have all the elements which are in full trie - > tree1
-        // That means we have different root because it was changed by adding new key-value pair
-        // some nodes in path to the root are also changed
-        // We want to insert another key-value pair in the partial trie
-        // But the root is different now
-        // We need to get partial path and path nodes for the new key-value pair that we want to insert now
-        // but we also need to construct new current_partial_nodes_heights in parrallel with  function traverse_to_partial()
-        //that way we can traverse through our new partial trie but when current_partial_nodes_heights will  not have necessary nodes on the path to the leaf
-        //then we should switch to the current_partial_nodes_heights constructed in parallel but on the original full trie
-        //
-        let (partial_path, path_nodes) = partial_trie
-            .trie
-            .get_partial_path(
-                &bonsai_storage3.tries.db,
-                proof_keys.iter(),
-                proof,
-                current_root,
-            )
-            .unwrap();
-        println!("Partial path: {:?}\n", partial_path);
-
-        let calculated_root = partial_trie
-            .build_from_visited_nodes(
-                path_nodes,
-                &new_key_bv,
-                new_value,
-                &mut bonsai_storage1.tries.db,
-            )
-            .unwrap();
-        println!("Calculated root: {:?}", calculated_root);
-
-        // Commit initial state of storage2
-        let id2 = id_builder.new_id();
-        bonsai_storage2.commit(id2).unwrap();
-        println!(
-            "\nInitial storage2 root: {:?}\n",
-            bonsai_storage2.root_hash(&identifier2).unwrap()
-        );
-
-        // Insert new value and commit
-        bonsai_storage2
-            .insert(&identifier2, &new_key_bv, &new_value)
-            .unwrap();
-        let id3 = id_builder.new_id();
-        bonsai_storage2.commit(id3).unwrap();
-        let expected_root = bonsai_storage2.root_hash(&identifier2).unwrap();
-        println!("Final expected root: {:?}", expected_root);
-
-        assert_eq!(
-            calculated_root, expected_root,
-            "Roots don't match: calculated={:?}, expected={:?}",
-            calculated_root, expected_root
-        );
-    }
-
-    #[test]
-    fn test_get_partial_path_from_existing_trie() {
-        let db = create_rocks_db(tempfile::tempdir().unwrap().path()).unwrap();
-        let identifier = vec![1];
-        let identifier2 = vec![2];
-        let identifier3 = vec![3];
-        let config = BonsaiStorageConfig::default();
-
-        let mut bonsai_storage1: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-            BonsaiStorage::new(
-                RocksDB::new(&db, RocksDBConfig::default()),
-                config.clone(),
-                24,
-            );
-        let mut bonsai_storage2: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-            BonsaiStorage::new(
-                RocksDB::new(&db, RocksDBConfig::default()),
-                config.clone(),
-                24,
-            );
-        let mut bonsai_storage3: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-            BonsaiStorage::new(
-                RocksDB::new(&db, RocksDBConfig::default()),
-                config.clone(),
-                24,
-            );
-
-        let mut id_builder = BasicIdBuilder::new();
-
-        for i in 0..10 {
-            let mut key = vec![0; 3];
-            key[0] = i;
-            let value = Felt::from(i as u64 + 100);
-            let key_bv = BitVec::from_vec(key.clone());
-
-            bonsai_storage1
-                .insert(&identifier, &key_bv, &value)
-                .unwrap();
-            bonsai_storage2
-                .insert(&identifier2, &key_bv, &value)
-                .unwrap();
-        }
-
-        let id1 = id_builder.new_id();
-        bonsai_storage1.commit(id1).unwrap();
-        let original_root = bonsai_storage1.root_hash(&identifier).unwrap();
-        println!("Initial root: {:?}", original_root);
-
-        let mut new_key = vec![0; 3];
-        new_key[0] = 1;
-        let new_value = Felt::from(105);
-        let new_key_bv = BitVec::from_vec(new_key.clone());
-
-        let tree1 = bonsai_storage1
-            .tries
-            .trees
-            .entry(smallvec::smallvec![1])
-            .or_insert_with(|| MerkleTree::new(identifier.clone().into(), 24));
-
-        let proof_keys = vec![&new_key_bv];
-        let proof = tree1
-            .get_multi_proof(&bonsai_storage1.tries.db, proof_keys.iter())
-            .unwrap();
-        println!("_________________________");
-        println!("FULL PROOF: {:?}\n", proof);
-
-        let mut partial_trie =
-            PartialTrie::<Pedersen>::new(identifier3.clone().into(), 24, original_root);
-
-        // Here we get the partial path and the path nodes from original proof and the current root
-        // We use the partial path to build the new partial trie below with build_from_visited_nodes().
-        // We inserted new key-value pair which doesnt exist in original full trie
-        // Now we have partial trie which doesn't have all the elements which are in full trie - > tree1
-        // That means we have different root because it was changed by adding new key-value pair
-        // some nodes in path to the root are also changed
-        // We want to insert another key-value pair in the partial trie
-        // But the root is different now
-        // We need to get partial path and path nodes for the new key-value pair that we want to insert now
-        // but we also need to construct new current_partial_nodes_heights in parrallel with  function traverse_to_partial()
-        //that way we can traverse through our new partial trie but when current_partial_nodes_heights will  not have necessary nodes on the path to the leaf
-        //then we should switch to the current_partial_nodes_heights constructed in parallel but on the original full trie
-        //
-
-        let current_root = original_root;
-
-        let path_nodes = partial_trie
-            .get_partial_path_from_existing_trie(
-                &new_key_bv,
-                proof,
-                original_root,
-                &mut bonsai_storage3.tries.db,
-            )
-            .unwrap();
-        println!("Path nodes: {:?}\n", path_nodes);
-        // here i will split the path_nodes into two vectors
-        // path_nodes until parameter split_index goes into build_from_visited_nodes
-        let calculated_root = partial_trie
-            .build_from_visited_nodes(
-                path_nodes,
-                &new_key_bv,
-                new_value,
-                &mut bonsai_storage1.tries.db,
-            )
-            .unwrap();
-        // here another parto of path_nodes
-        // let new_calculated_root = partial_trie.update_nodes
-
-        println!("Calculated root: {:?}", calculated_root);
-
-        // Commit initial state of storage2
-        let id2 = id_builder.new_id();
-        bonsai_storage2.commit(id2).unwrap();
-        println!(
-            "Initial storage2 root: {:?}",
-            bonsai_storage2.root_hash(&identifier2).unwrap()
-        );
-
-        // Insert new value and commit
-        bonsai_storage2
-            .insert(&identifier2, &new_key_bv, &new_value)
-            .unwrap();
-        let id3 = id_builder.new_id();
-        bonsai_storage2.commit(id3).unwrap();
-        let expected_root = bonsai_storage2.root_hash(&identifier2).unwrap();
-        println!("Final expected root: {:?}", expected_root);
-
-        assert_eq!(
-            calculated_root, expected_root,
-            "Roots don't match: calculated={:?}, expected={:?}",
-            calculated_root, expected_root
-        );
-    }
-
-    #[test]
-    fn test_next_root_height_overwriting_root() {
-        let base_db = create_rocks_db(tempfile::tempdir().unwrap().path()).unwrap();
-        let reference_db = create_rocks_db(tempfile::tempdir().unwrap().path()).unwrap();
-        let fork_db = create_rocks_db(tempfile::tempdir().unwrap().path()).unwrap();
-
-        let base_identifier = vec![1];
-        let reference_identifier = vec![2];
-        let fork_identifier = vec![3];
-
-        let config = BonsaiStorageConfig::default();
-        let mut base_bonsai_storage: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-            BonsaiStorage::new(
-                RocksDB::new(&base_db, RocksDBConfig::default()),
-                config.clone(),
-                4,
-            );
-        let mut reference_bonsai_storage: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-            BonsaiStorage::new(
-                RocksDB::new(&reference_db, RocksDBConfig::default()),
-                config.clone(),
-                4,
-            );
-        let mut fork_bonsai_storage: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-            BonsaiStorage::new(
-                RocksDB::new(&fork_db, RocksDBConfig::default()),
-                config.clone(),
-                4,
-            );
-
-        let mut id_builder = BasicIdBuilder::new();
-
-        let one = bits![u8, Msb0; 1, 1, 1, 0];
-        // let two = bits![u8, Msb0; 1, 0];
-
-        // Klucze początkowe
-        let initial_keys = vec![one];
-
-        let initial_values = vec![Felt::from(0x65)];
-
-        for (key, value) in initial_keys.iter().zip(initial_values.iter()) {
-            base_bonsai_storage
-                .insert(&base_identifier, key, value)
-                .unwrap();
-            reference_bonsai_storage
-                .insert(&reference_identifier, key, value)
-                .unwrap();
-        }
-
-        base_bonsai_storage.commit(id_builder.new_id()).unwrap();
-        let original_root = base_bonsai_storage.root_hash(&base_identifier).unwrap();
-        println!("Original root: {:?}", original_root);
-
-        let mut partial_trie =
-            PartialTrie::<Pedersen>::new(fork_identifier.clone().into(), 4, original_root);
-
-        let tree1 = base_bonsai_storage
-            .tries
-            .trees
-            .entry(smallvec::smallvec![base_identifier[0]])
-            .or_insert_with(|| MerkleTree::new(base_identifier.clone().into(), 4));
-
-        // Nowy klucz do dodania - ten sam co w oryginalnym teście
-        let new_key = bits![u8, Msb0; 1, 1, 0, 0];
-        let new_value = Felt::from(0x65); // 260
-
-        // Nowy klucz do dodania - ten sam co w oryginalnym teście
-        let new_key2 = bits![u8, Msb0; 0, 0, 0, 0];
-        let new_value2 = Felt::from(0x65); // 260
-
-        // Nowy klucz do dodania - ten sam co w oryginalnym teście
-        let new_key3 = bits![u8, Msb0; 1, 1, 0, 0];
-        let new_value3 = Felt::from(0x65); // 260
-
-        let proof_keys = vec![&new_key];
-        let proof = tree1
-            .get_multi_proof(&base_bonsai_storage.tries.db, proof_keys.iter())
-            .unwrap();
-        println!("Proof: {:?}", proof);
-
-        println!("\nFIRST ITERATION\n");
-        println!(
-            "\nPartialTree NODES before adding FIRST new key-value pair: {:?}\n",
-            partial_trie
-                .trie
-                .proof_nodes
-                .iter()
-                .map(|(k, v)| (k, v))
-                .collect::<HashMap<_, _>>()
-        );
-
-        let calculated_root = partial_trie
-            .set(
-                &mut fork_bonsai_storage.tries.db,
-                &new_key,
-                new_value,
-                proof,
-                original_root,
-            )
-            .unwrap();
-        println!("Calculated root: {:?}", calculated_root);
-
-        let proof_keys2 = vec![&new_key2];
-        let proof2 = tree1
-            .get_multi_proof(&base_bonsai_storage.tries.db, proof_keys2.iter())
-            .unwrap();
-        println!("Proof2: {:?}", proof2);
-
-        println!("\nSECOND ITERATION\n");
-
-        println!(
-            "\nPartialTree NODES before adding SECOND new key-value pair: {:?}\n",
-            partial_trie
-                .trie
-                .proof_nodes
-                .iter()
-                .map(|(k, v)| (k, v))
-                .collect::<HashMap<_, _>>()
-        );
-        let calculated_root = partial_trie
-            .set(
-                &mut fork_bonsai_storage.tries.db,
-                &new_key2,
-                new_value2,
-                proof2,
-                original_root,
-            )
-            .unwrap();
-        println!("Calculated root: {:?}", calculated_root);
-
-        let proof_keys3 = vec![&new_key3];
-        let proof3 = tree1
-            .get_multi_proof(&base_bonsai_storage.tries.db, proof_keys3.iter())
-            .unwrap();
-        println!("Proof3: {:?}", proof3);
-
-        println!("\nThird ITERATION\n");
-
-        println!(
-            "\nPartialTree NODES before adding  THIRD new key-value pair: {:?}\n",
-            partial_trie
-                .trie
-                .proof_nodes
-                .iter()
-                .map(|(k, v)| (k, v))
-                .collect::<HashMap<_, _>>()
-        );
-
-        let calculated_root = partial_trie
-            .set(
-                &mut fork_bonsai_storage.tries.db,
-                &new_key3,
-                new_value3,
-                proof3,
-                original_root,
-            )
-            .unwrap();
-        println!("Calculated root: {:?}", calculated_root);
-
-        // Dodaj nowy klucz do referencyjnego drzewa
-        reference_bonsai_storage
-            .insert(&reference_identifier, &new_key, &new_value)
-            .unwrap();
-        reference_bonsai_storage
-            .commit(id_builder.new_id())
-            .unwrap();
-        reference_bonsai_storage
-            .insert(&reference_identifier, &new_key2, &new_value2)
-            .unwrap();
-        reference_bonsai_storage
-            .commit(id_builder.new_id())
-            .unwrap();
-        reference_bonsai_storage
-            .insert(&reference_identifier, &new_key3, &new_value3)
-            .unwrap();
-        reference_bonsai_storage
-            .commit(id_builder.new_id())
-            .unwrap();
-        let expected_root = reference_bonsai_storage
-            .root_hash(&reference_identifier)
-            .unwrap();
-        println!("Expected root: {:?}", expected_root);
-
-        assert_eq!(calculated_root, expected_root);
     }
 }
