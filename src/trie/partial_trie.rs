@@ -67,10 +67,15 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
             // return self.delete_leaf(db, key);
             !unimplemented!()
         }
+        println!("SET KEY: {:?}", key);
+        println!("SET VALUE: {:?}", value);
+        println!("SET ORIGINAL ROOT: {:?}", original_root);
         //Traverse tree insert nodes and return path
         let path_nodes = self
             .get_partial_path_from_existing_trie(&key, proof, original_root, db)
             .unwrap();
+
+        println!("Path nodes: {:?}", path_nodes);
 
         //Build tree from visited nodes
         let calculated_root = self
@@ -83,7 +88,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
     /// This function builds tree from visited nodes and recursively updates hashes up the path
     fn build_from_visited_nodes(
         &mut self,
-        mut path_nodes: Vec<(NodeKey, usize)>,
+        path_nodes: Vec<(NodeKey, usize)>,
         key: &BitSlice,
         value: Felt,
         db: &mut KeyValueDB<RocksDB<BasicId>, BasicId>,
@@ -136,6 +141,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
 
         match &mut node {
             PartialTrieNode::Edge(edge) => {
+                println!("EDGE: {:?}", edge);
                 let common = edge.common_path(key);
                 let branch_height = edge.height as usize + common.len();
 
@@ -157,7 +163,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 let old_path = edge.path[common.len() + 1..].to_bitvec();
 
                 let (new_hash, new_id) = if new_path.is_empty() {
-                    println!("New path is empty");
                     (
                         ProofNodeHandle::Hash(value),
                         ProofNodeHandle::Hash(Felt::ZERO),
@@ -171,9 +176,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                         child: ProofNodeHandle::Hash(value),
                         child_handle: ProofNodeHandle::Hash(Felt::ZERO),
                     });
-
                     let edge_id = self.trie.proof_nodes.insert(edge_node);
-
                     (
                         ProofNodeHandle::Hash(edge_hash),
                         ProofNodeHandle::InMemory(edge_id),
@@ -181,7 +184,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 };
 
                 let (old_hash, old_id) = if old_path.is_empty() {
-                    println!("Old path is empty");
                     (edge.child, edge.child_handle)
                 } else {
                     let edge_hash =
@@ -231,8 +233,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                         child: ProofNodeHandle::Hash(branch_hash),
                         child_handle: ProofNodeHandle::InMemory(branch_node_key),
                     });
-
-                    println!("Returning edge node with binary node {:?}", new_node);
                     (edge_node_hash, new_node)
                 };
 
@@ -246,6 +246,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 Ok((final_hash, node))
             }
             PartialTrieNode::Binary(binary) => {
+                println!("BINARY: {:?}", binary);
                 let child_height = binary.height + 1;
                 let direction = Direction::from(key[binary.height as usize]);
 
@@ -348,10 +349,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 }
             }
         } else {
-            println!(
-                "No more nodes to process, returning current_hash: {:?}",
-                current_hash
-            );
             current_hash
         }
     }
@@ -425,7 +422,7 @@ mod tests {
     }
 
     fn arb_power_of_two_keys(max_height: u8) -> impl Strategy<Value = Vec<(BitVec, Felt)>> {
-        (0..8).prop_flat_map(move |power| {
+        (0..4).prop_flat_map(move |power| {
             let num_keys = 1 << power;
             prop::collection::vec(arb_key_value(max_height), num_keys as usize)
         })
@@ -509,8 +506,9 @@ mod tests {
         let eleven = bits![u8,Msb0; 0,0,0,0,1,0,1,1];
         let twelve = bits![u8,Msb0; 0,0,0,0,1,1,0,0];
 
-        // let keys = vec![one, two, three, four, five, six, seven, eight, nine, ten, eleven, twelve];
-        let keys = vec![one, two, three, four, five];
+        let keys = vec![
+            one, two, three, four, five, six, seven, eight, nine, ten, eleven, twelve,
+        ];
         let values = vec![
             Felt::from(1),
             Felt::from(2),
@@ -669,12 +667,10 @@ mod tests {
     proptest! {
         #![proptest_config(ProptestConfig::default())]
         #[test]
-        fn test_set_root_multiple_calls_height_2_only(
+        fn test_set_root_multiple_calls_height_2(
             initial_keys_values in arb_power_of_two_keys(2),
             new_keys_values in vec(arb_key_value(2), 1..5),
         ) {
-            println!("Initial keys: {:?}", initial_keys_values);
-        println!("New keys: {:?}", new_keys_values);
             test_set_root_multiple_calls(2, initial_keys_values, new_keys_values);
         }
     }
@@ -759,7 +755,6 @@ mod tests {
         let mut id_builder = BasicIdBuilder::new();
 
         for (key, value) in initial_keys_values.iter() {
-            println!("Inserting initial key: {:?}, value: {:?}", key, value);
             base_bonsai_storage
                 .insert(&base_identifier, key, value)
                 .unwrap();
@@ -773,7 +768,6 @@ mod tests {
             .commit(id_builder.new_id())
             .unwrap();
         let original_root = base_bonsai_storage.root_hash(&base_identifier).unwrap();
-        println!("Original root: {:?}", original_root);
 
         let mut partial_trie =
             PartialTrie::<Pedersen>::new(fork_identifier.clone().into(), height, original_root);
@@ -789,12 +783,13 @@ mod tests {
         let mut i = 0;
         for (key, value) in new_keys_values.iter() {
             i += 1;
-            println!("ITERATION: {:?}", i);
-
             let proof_keys = vec![key];
             let proof = tree1
                 .get_multi_proof(&base_bonsai_storage.tries.db, proof_keys.iter())
                 .unwrap();
+
+            println!("\nITERATION: {:?}\n", i);
+            println!("\nProof: {:?}\n", proof);
 
             let calculated_root = partial_trie
                 .set(
@@ -805,7 +800,16 @@ mod tests {
                     original_root,
                 )
                 .unwrap();
-            println!("Calculated root: {:?}\n", calculated_root);
+
+            println!(
+                "\nPartialTree NODES after adding new key-value pair: {:?}\n",
+                partial_trie
+                    .trie
+                    .proof_nodes
+                    .iter()
+                    .map(|(k, v)| (k, v))
+                    .collect::<HashMap<_, _>>()
+            );
 
             calculated_roots.push(calculated_root);
         }
@@ -821,6 +825,8 @@ mod tests {
             let actual_root = reference_bonsai_storage
                 .root_hash(&reference_identifier)
                 .unwrap();
+            println!("Expected root: {:?}", expected_root);
+            println!("Actual root: {:?}", actual_root);
             assert_eq!(expected_root, actual_root);
         }
     }

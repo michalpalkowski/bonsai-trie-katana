@@ -287,6 +287,8 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
 
         let partial_trie_node = self.tree.get_proof_node_mut::<DB>(node_id)?;
 
+        println!("\nPartial trie node: {:?}\n", partial_trie_node);
+
         let (proof_node_child, proof_node_handle, path_matches) = match partial_trie_node {
             PartialTrieNode::Binary(binary_node) => {
                 log::trace!(
@@ -517,14 +519,12 @@ mod tests {
     //!   0x1    0x2       0x3      0x4        
     //! ```
 
-    use crate::id::BasicIdBuilder;
     use crate::{
         databases::{create_rocks_db, RocksDB, RocksDBConfig},
         id::{BasicId, Id},
         trie::iterator::MerkleTreeIterator,
         BonsaiDatabase, BonsaiStorage, BonsaiStorageConfig,
     };
-    use crate::{BitVec, HashMap};
     use bitvec::{bits, order::Msb0};
     use prop::{collection::vec, sample::size_range};
     use proptest::prelude::*;
@@ -537,8 +537,6 @@ mod tests {
     const TWO: Felt = Felt::TWO;
     const THREE: Felt = Felt::THREE;
     const FOUR: Felt = Felt::from_hex_unchecked("0x4");
-    const FIVE: Felt = Felt::from_hex_unchecked("0x5");
-    const SIX: Felt = Felt::from_hex_unchecked("0x6");
 
     #[test]
     fn test_iterator_seek_to() {
@@ -556,75 +554,27 @@ mod tests {
         );
 
         bonsai_storage
-            .insert(&[], bits![u8, Msb0; 1,0,0,0,0,0,0,0], &ONE)
+            .insert(&[], bits![u8, Msb0; 0,0,0,1,0,0,0,0], &ONE)
             .unwrap();
         bonsai_storage
-            .insert(&[], bits![u8, Msb0; 0,1,0,0,0,0,0,0], &TWO)
+            .insert(&[], bits![u8, Msb0; 0,0,0,1,0,0,0,1], &TWO)
             .unwrap();
         bonsai_storage
-            .insert(&[], bits![u8, Msb0; 1,1,0,0,0,0,0,0], &THREE)
+            .insert(&[], bits![u8, Msb0; 0,0,0,1,0,0,1,0], &THREE)
             .unwrap();
         bonsai_storage
-            .insert(&[], bits![u8, Msb0; 0,0,1,0,0,0,0,0], &FOUR)
+            .insert(&[], bits![u8, Msb0; 0,1,0,0,0,0,0,0], &FOUR)
             .unwrap();
-        bonsai_storage
-            .insert(&[], bits![u8, Msb0; 1,0,1,0,0,0,0,0], &FIVE)
-            .unwrap();
-        // bonsai_storage
-        //     .insert(&[], bits![u8, Msb0; 0,0,0,0,0,1,1,0], &SIX)
-        //     .unwrap();
-
-        let mut id_builder = BasicIdBuilder::new();
-        let id1 = id_builder.new_id();
-        // bonsai_storage.commit(id1).unwrap();
-        let mut bv = BitVec::new();
-        bv.extend_from_bitslice(&bits![u8, Msb0; 1,0,0,0,0,0,0,0]);
-        let proof_keys: Vec<BitVec> = vec![bv];
-        let multi_proof = bonsai_storage.get_multi_proof(&[], &proof_keys);
-        println!("\nMulti proof for node 0x1: {:?}\n", multi_proof.unwrap());
-
-        let mut bv = BitVec::new();
-        bv.extend_from_bitslice(&bits![u8, Msb0; 0,1,0,0,0,0,0,0]);
-        let proof_keys: Vec<BitVec> = vec![bv];
-        let multi_proof = bonsai_storage.get_multi_proof(&[], &proof_keys);
-        println!("\nMulti proof for node 0x2: {:?}\n", multi_proof.unwrap());
-
-        let mut bv = BitVec::new();
-        bv.extend_from_bitslice(&bits![u8, Msb0; 1,1,0,0,0,0,0,0]);
-        let proof_keys: Vec<BitVec> = vec![bv];
-        let multi_proof = bonsai_storage.get_multi_proof(&[], &proof_keys);
-        println!("\nMulti proof for node 0x3: {:?}\n", multi_proof.unwrap());
-
-        let mut bv = BitVec::new();
-        bv.extend_from_bitslice(&bits![u8, Msb0; 0,0,1,0,0,0,0,0]);
-        let proof_keys: Vec<BitVec> = vec![bv];
-        let multi_proof = bonsai_storage.get_multi_proof(&[], &proof_keys);
-        println!("\nMulti proof for node 0x4: {:?}\n", multi_proof.unwrap());
-
-        let mut bv = BitVec::new();
-        bv.extend_from_bitslice(&bits![u8, Msb0; 1,0,1,0,0,0,0,0]);
-        let proof_keys: Vec<BitVec> = vec![bv];
-        let multi_proof = bonsai_storage.get_multi_proof(&[], &proof_keys);
-        println!("\nMulti proof for node 0x5: {:?}\n", multi_proof.unwrap());
 
         bonsai_storage.dump();
 
         // Trie
-        println!("\ntree: {:?}\n", bonsai_storage.tries.trees);
 
         let tree = bonsai_storage
             .tries
             .trees
             .get_mut(&smallvec::smallvec![])
             .unwrap();
-        println!(
-            "\nTree NODES: {:?}\n",
-            tree.nodes
-                .iter()
-                .map(|(k, v)| (k, v))
-                .collect::<HashMap<_, _>>()
-        );
-
         let mut iter = MerkleTreeIterator::new(tree, &bonsai_storage.tries.db);
 
         let cases_funcs = all_cases();
