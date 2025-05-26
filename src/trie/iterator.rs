@@ -183,6 +183,21 @@ impl<'a, H: StarkHash, DB: BonsaiDatabase, ID: Id> PartialMerkleTreeIterator<'a,
     }
 }
 
+impl<'a, H: StarkHash, DB: BonsaiDatabase, ID: Id> fmt::Debug
+    for PartialMerkleTreeIterator<'a, H, DB, ID>
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PartialMerkleTreeIterator")
+            .field("cur_path", &self.current_path)
+            .field(
+                "current_partial_nodes_heights",
+                &self.current_partial_nodes_heights,
+            )
+            .field("leaf_hash", &self.leaf_hash)
+            .finish()
+    }
+}
+
 impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeTraverser<H, DB, ID>
     for MerkleTreeIterator<'a, H, DB, ID>
 {

@@ -695,6 +695,8 @@ mod tests {
             initial_keys_values in arb_power_of_two_keys(2),
             new_keys_values in vec(arb_key_value(2), 1..3),
         ) {
+            println!("initial_keys_values: {:?}", initial_keys_values);
+            println!("new_keys_values: {:?}", new_keys_values);
             test_set_root_multiple_calls(2, initial_keys_values, new_keys_values);
         }
     }
@@ -706,6 +708,8 @@ mod tests {
             initial_keys_values in arb_power_of_two_keys(4),
             new_keys_values in vec(arb_key_value(4), 1..5),
         ) {
+            println!("initial_keys_values: {:?}", initial_keys_values);
+            println!("new_keys_values: {:?}", new_keys_values);
             test_set_root_multiple_calls(4, initial_keys_values, new_keys_values);
         }
     }
@@ -785,12 +789,12 @@ mod tests {
             reference_bonsai_storage
                 .insert(&reference_identifier, key, value)
                 .unwrap();
+            base_bonsai_storage.commit(id_builder.new_id()).unwrap();
+            reference_bonsai_storage
+                .commit(id_builder.new_id())
+                .unwrap();
         }
 
-        base_bonsai_storage.commit(id_builder.new_id()).unwrap();
-        reference_bonsai_storage
-            .commit(id_builder.new_id())
-            .unwrap();
         let original_root = base_bonsai_storage.root_hash(&base_identifier).unwrap();
 
         let mut partial_trie =
