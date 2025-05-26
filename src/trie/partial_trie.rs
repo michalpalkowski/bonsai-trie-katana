@@ -51,16 +51,14 @@ impl<DBE: DBError> From<PartialTrieError> for BonsaiStorageError<DBE> {
 struct PartialTrie<H: StarkHash> {
     trie: MerkleTree<H>,
     max_height: u8,
-    original_root: Felt,
     _hasher: PhantomData<H>,
 }
 
 impl<H: StarkHash + Send + Sync> PartialTrie<H> {
-    fn new(identifier: ByteVec, max_height: u8, original_root: Felt) -> Self {
+    fn new(identifier: ByteVec, max_height: u8) -> Self {
         Self {
             trie: MerkleTree::new(identifier, max_height),
             max_height,
-            original_root,
             _hasher: PhantomData,
         }
     }
@@ -79,13 +77,13 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         if value == Felt::ZERO {
             return Err(PartialTrieError::SetValueZero.into());
         }
-        println!("SET KEY: {:?}", key);
-        println!("SET VALUE: {:?}", value);
-        println!("SET ORIGINAL ROOT: {:?}", original_root);
+        log::trace!("SET KEY: {:?}", key);
+        log::trace!("SET VALUE: {:?}", value);
+        log::trace!("SET ORIGINAL ROOT: {:?}", original_root);
 
         let path_nodes = self.get_path_for_partial_trie(&key, proof, original_root, db)?;
 
-        println!("Path nodes: {:?}", path_nodes);
+        log::trace!("Path nodes: {:?}", path_nodes);
 
         let calculated_root = self.build_from_visited_nodes(path_nodes.clone(), &key, value, db)?;
 
@@ -560,8 +558,7 @@ mod tests {
         let original_root = base_tree.root_hash(&identifier).unwrap();
         println!("Original root: {:?}", original_root);
 
-        let mut partial_trie =
-            PartialTrie::<Pedersen>::new(identifier4.clone().into(), 8, original_root);
+        let mut partial_trie = PartialTrie::<Pedersen>::new(identifier4.clone().into(), 8);
         let mut calculated_roots: Vec<Felt> = Vec::new();
         let mut i = 0;
         let mut current_root = original_root;
@@ -797,8 +794,7 @@ mod tests {
 
         let original_root = base_bonsai_storage.root_hash(&base_identifier).unwrap();
 
-        let mut partial_trie =
-            PartialTrie::<Pedersen>::new(fork_identifier.clone().into(), height, original_root);
+        let mut partial_trie = PartialTrie::<Pedersen>::new(fork_identifier.clone().into(), height);
 
         let mut calculated_roots = Vec::new();
 
