@@ -52,18 +52,6 @@ pub(crate) enum RootHandle {
     Empty,
     Loaded(NodeKey),
 }
-
-#[derive(Debug, Clone, Copy)]
-pub enum ProofNodeChildren {
-    BinaryChildrenHandle {
-        left: Option<NodeKey>,
-        right: Option<NodeKey>,
-    },
-    EdgeChildrenHandle {
-        child: Option<NodeKey>,
-    },
-    None,
-}
 /// A Starknet binary Merkle-Patricia tree with a specific root entry-point and storage.
 ///
 /// This is used to update, mutate and access global Starknet state as well as individual contract
@@ -626,9 +614,9 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         if value == Felt::ZERO {
             return self.delete_leaf(db, key);
         }
-        if key.len() != self.max_height as _ {
+        if key.len() != self.max_height as usize {
             return Err(BonsaiStorageError::KeyLength {
-                expected: self.max_height as _,
+                expected: self.max_height as usize,
                 got: key.len(),
             });
         }
@@ -823,9 +811,9 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         db: &KeyValueDB<DB, ID>,
         key: &BitSlice,
     ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
-        if key.len() != self.max_height as _ {
+        if key.len() != self.max_height as usize {
             return Err(BonsaiStorageError::KeyLength {
-                expected: self.max_height as _,
+                expected: self.max_height as usize,
                 got: key.len(),
             });
         }

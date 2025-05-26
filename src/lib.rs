@@ -100,7 +100,11 @@ pub(crate) use alloc::{
     vec,
     vec::Vec,
 };
-use core::fmt;
+use core::{
+    fmt,
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
+};
 use id::Id;
 #[cfg(feature = "std")]
 pub(crate) use std::{
@@ -153,7 +157,11 @@ impl<T: parity_scale_codec::Encode> EncodeExt for T {}
 
 use key_value_db::KeyValueDB;
 use starknet_types_core::{felt::Felt, hash::StarkHash};
-use trie::{tree::bytes_to_bitvec, trees::MerkleTrees};
+use trie::{
+    partial_trie::PartialTrie,
+    tree::bytes_to_bitvec,
+    trees::{MerkleTrees, PartialMerkleTrees},
+};
 
 /// Structure that contains the configuration for the BonsaiStorage.
 /// A default implementation is provided with coherent values.
@@ -196,12 +204,20 @@ pub struct Change {
 /// Structure that hold the trie and all the necessary information to work with it.
 ///
 /// This structure is the main entry point to work with this crate.
-pub struct BonsaiStorage<ChangeID: Id, DB: BonsaiDatabase, H: StarkHash + Send + Sync> {
-    tries: MerkleTrees<H, DB, ChangeID>,
+pub struct BonsaiStorage<
+    ChangeID: Id,
+    DB: BonsaiDatabase,
+    H: StarkHash + Send + Sync,
+    T = MerkleTrees<H, DB, ChangeID>,
+> {
+    tries: T,
+    _hasher: PhantomData<H>,
+    _db: PhantomData<DB>,
+    _change_id: PhantomData<ChangeID>,
 }
 
-impl<ChangeID: Id, DB: BonsaiDatabase + fmt::Debug, H: StarkHash + Send + Sync> fmt::Debug
-    for BonsaiStorage<ChangeID, DB, H>
+impl<ChangeID: Id, DB: BonsaiDatabase, H: StarkHash + Send + Sync> fmt::Debug
+    for BonsaiStorage<ChangeID, DB, H, MerkleTrees<H, DB, ChangeID>>
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BonsaiStorage")
@@ -211,7 +227,7 @@ impl<ChangeID: Id, DB: BonsaiDatabase + fmt::Debug, H: StarkHash + Send + Sync> 
 }
 
 #[cfg(feature = "bench")]
-impl<ChangeID, DB, H> Clone for BonsaiStorage<ChangeID, DB, H>
+impl<ChangeID, DB, H> Clone for BonsaiStorage<ChangeID, DB, H, MerkleTrees<H, DB, ChangeID>>
 where
     DB: BonsaiDatabase + Clone,
     ChangeID: id::Id,
@@ -227,17 +243,17 @@ where
 /// Trie root hash type.
 pub type BonsaiTrieHash = Felt;
 
-impl<ChangeID, DB, H> BonsaiStorage<ChangeID, DB, H>
-where
-    DB: BonsaiDatabase,
-    ChangeID: id::Id,
-    H: StarkHash + Send + Sync,
+impl<ChangeID: Id, DB: BonsaiDatabase, H: StarkHash + Send + Sync>
+    BonsaiStorage<ChangeID, DB, H, MerkleTrees<H, DB, ChangeID>>
 {
     /// Create a new bonsai storage instance
     pub fn new(db: DB, config: BonsaiStorageConfig, max_height: u8) -> Self {
         let key_value_db = KeyValueDB::new(db, config.into(), None);
         Self {
             tries: MerkleTrees::new(key_value_db, max_height),
+            _hasher: PhantomData,
+            _db: PhantomData,
+            _change_id: PhantomData,
         }
     }
 
@@ -249,7 +265,12 @@ where
     ) -> Result<Self, BonsaiStorageError<DB::DatabaseError>> {
         let key_value_db = KeyValueDB::new(db, config.into(), Some(created_at));
         let tries = MerkleTrees::<H, DB, ChangeID>::new(key_value_db, max_height);
-        Ok(Self { tries })
+        Ok(Self {
+            tries,
+            _hasher: PhantomData,
+            _db: PhantomData,
+            _change_id: PhantomData,
+        })
     }
 
     /// Insert a new key/value in the trie, overwriting the previous value if it exists.
@@ -451,7 +472,7 @@ where
     }
 }
 
-impl<ChangeID, DB, H> BonsaiStorage<ChangeID, DB, H>
+impl<ChangeID, DB, H> BonsaiStorage<ChangeID, DB, H, MerkleTrees<H, DB, ChangeID>>
 where
     DB: BonsaiDatabase + BonsaiPersistentDatabase<ChangeID>,
     ChangeID: id::Id,
@@ -478,7 +499,14 @@ where
         change_id: ChangeID,
         config: BonsaiStorageConfig,
     ) -> Result<
-        Option<BonsaiStorage<ChangeID, DB::Transaction<'_>, H>>,
+        Option<
+            BonsaiStorage<
+                ChangeID,
+                DB::Transaction<'_>,
+                H,
+                MerkleTrees<H, DB::Transaction<'_>, ChangeID>,
+            >,
+        >,
         BonsaiStorageError<<DB::Transaction<'_> as BonsaiDatabase>::DatabaseError>,
     > {
         // If requested equals last recorded, do nothing
@@ -506,7 +534,12 @@ where
     /// Merge a transactional state into the main trie.
     pub fn merge(
         &mut self,
-        transactional_bonsai_storage: BonsaiStorage<ChangeID, DB::Transaction<'_>, H>,
+        transactional_bonsai_storage: BonsaiStorage<
+            ChangeID,
+            DB::Transaction<'_>,
+            H,
+            MerkleTrees<H, DB::Transaction<'_>, ChangeID>,
+        >,
     ) -> Result<(), BonsaiStorageError<<DB as BonsaiPersistentDatabase<ChangeID>>::DatabaseError>>
     where
         <DB as BonsaiDatabase>::DatabaseError: core::fmt::Debug,
@@ -541,5 +574,38 @@ where
             }
         }
         Ok(())
+    }
+}
+
+impl<ChangeID: Id, DB: BonsaiDatabase, H: StarkHash + Send + Sync>
+    BonsaiStorage<ChangeID, DB, H, PartialMerkleTrees<H, DB, ChangeID>>
+{
+    /// Create a new partial bonsai storage instance
+    pub fn new_partial(db: DB, config: BonsaiStorageConfig, max_height: u8) -> Self {
+        let key_value_db = KeyValueDB::new(db, config.into(), None);
+        Self {
+            tries: PartialMerkleTrees::new(key_value_db, max_height),
+            _hasher: PhantomData,
+            _db: PhantomData,
+            _change_id: PhantomData,
+        }
+    }
+
+    pub fn insert_with_proof(
+        &mut self,
+        identifier: &[u8],
+        key: &BitSlice,
+        value: &Felt,
+        proof: MultiProof,
+        original_root: Felt,
+    ) -> Result<Felt, BonsaiStorageError<DB::DatabaseError>> {
+        if let Some(tree) = self.tries.trees.get_mut(identifier) {
+            tree.set(&mut self.tries.db, key, *value, proof, original_root)
+        } else {
+            let mut tree = PartialTrie::new(identifier.into(), self.tries.max_height);
+            let root = tree.set(&mut self.tries.db, key, *value, proof, original_root)?;
+            self.tries.trees.insert(identifier.into(), tree);
+            Ok(root)
+        }
     }
 }

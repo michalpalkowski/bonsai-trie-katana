@@ -1,7 +1,7 @@
 use super::{
     merkle_node::{Direction, Node, NodeHandle},
     path::Path,
-    tree::{MerkleTree, NodeKey, ProofNodeChildren, RootHandle},
+    tree::{MerkleTree, NodeKey, RootHandle},
 };
 use crate::trie::merkle_node::PartialTrieNode;
 use crate::trie::merkle_node::{EdgePartialTrieNode, ProofNodeHandle};

@@ -11,7 +11,7 @@ use super::iterator::MerkleTreeTraverser;
 use super::{
     merkle_node::{hash_binary_node, hash_edge_node, Direction},
     path::Path,
-    tree::{MerkleTree, ProofNodeChildren},
+    tree::MerkleTree,
 };
 use crate::trie::merkle_node::PartialTrieNode;
 use crate::{
