@@ -19,6 +19,7 @@ use super::{
     trie_db::TrieKeyType,
     TrieKey,
 };
+use crate::trie::iterator::PartialMerkleTreeIterator;
 use crate::trie::merkle_node::{
     BinaryPartialTrieNode, EdgePartialTrieNode, PartialTrieNode, ProofNodeHandle,
 };
@@ -296,12 +297,12 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         MerkleTreeIterator::new(self, db)
     }
 
-    pub fn iter_partial<'a, DB: BonsaiDatabase, ID: Id>(
+    pub fn iter_partial_trie<'a, DB: BonsaiDatabase, ID: Id>(
         &'a mut self,
         db: &'a KeyValueDB<DB, ID>,
         proof: MultiProof,
-    ) -> MerkleTreeIterator<'a, H, DB, ID> {
-        MerkleTreeIterator::new_with_proof(self, db, proof)
+    ) -> PartialMerkleTreeIterator<'a, H, DB, ID> {
+        PartialMerkleTreeIterator::new(self, db, proof)
     }
 
     /// # Panics

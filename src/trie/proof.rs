@@ -7,6 +7,7 @@
 //! - Error handling for proof verification
 //! - Utilities for calculating new root hashes
 
+use super::iterator::MerkleTreeTraverser;
 use super::{
     merkle_node::{hash_binary_node, hash_edge_node, Direction},
     path::Path,

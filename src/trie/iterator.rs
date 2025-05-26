@@ -74,6 +74,37 @@ impl<H: StarkHash> PartialNodeVisitor<H> for NoopPartialVisitor<H> {
     }
 }
 
+pub trait MerkleTreeTraverser<H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> {
+    fn traverse_one(
+        &mut self,
+        node_id: NodeKey,
+        height: usize,
+        key: &BitSlice,
+    ) -> Result<Option<NodeKey>, BonsaiStorageError<DB::DatabaseError>>;
+
+    fn traverse_to<V: NodeVisitor<H>>(
+        &mut self,
+        visitor: &mut V,
+        key: &BitSlice,
+    ) -> Result<(), BonsaiStorageError<DB::DatabaseError>>;
+}
+
+pub trait PartialMerkleTreeTraverser<H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> {
+    fn traverse_one(
+        &mut self,
+        node_id: NodeKey,
+        height: usize,
+        key: &BitSlice,
+    ) -> Result<Option<NodeKey>, BonsaiStorageError<DB::DatabaseError>>;
+
+    fn traverse_to<V: PartialNodeVisitor<H>>(
+        &mut self,
+        visitor: &mut V,
+        key: &BitSlice,
+        root: Felt,
+    ) -> Result<(), BonsaiStorageError<DB::DatabaseError>>;
+}
+
 pub struct MerkleTreeIterator<'a, H: StarkHash, DB: BonsaiDatabase, ID: Id> {
     pub(crate) tree: &'a mut MerkleTree<H>,
     pub(crate) db: &'a KeyValueDB<DB, ID>,
@@ -82,11 +113,23 @@ pub struct MerkleTreeIterator<'a, H: StarkHash, DB: BonsaiDatabase, ID: Id> {
     /// The loaded nodes in the current path with their corresponding heights. Height is at the base of the node, meaning
     /// the first node here will always have height 0.
     pub(crate) current_nodes_heights: Vec<(NodeKey, usize)>,
+    /// Current leaf hash. Note that partial traversal (traversal that stops midway through the tree) will
+    /// also update this field if an exact match for the key is found, even though we may not have reached a leaf.
+    pub(crate) leaf_hash: Option<Felt>,
+}
+
+pub struct PartialMerkleTreeIterator<'a, H: StarkHash, DB: BonsaiDatabase, ID: Id> {
+    pub(crate) tree: &'a mut MerkleTree<H>,
+    pub(crate) db: &'a KeyValueDB<DB, ID>,
+    /// Current iteration path.
+    pub(crate) current_path: Path,
+    /// The loaded nodes in the current path with their corresponding heights. Height is at the base of the node, meaning
+    /// the first node here will always have height 0.
     pub(crate) current_partial_nodes_heights: Vec<(NodeKey, usize)>,
     /// Current leaf hash. Note that partial traversal (traversal that stops midway through the tree) will
     /// also update this field if an exact match for the key is found, even though we may not have reached a leaf.
     pub(crate) leaf_hash: Option<Felt>,
-    pub(crate) proof: Option<MultiProof>,
+    pub(crate) proof: MultiProof,
 }
 
 impl<'a, H: StarkHash, DB: BonsaiDatabase, ID: Id> fmt::Debug
@@ -108,25 +151,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
             db,
             current_path: Default::default(),
             current_nodes_heights: Vec::with_capacity(251),
-            current_partial_nodes_heights: Vec::with_capacity(251),
             leaf_hash: None,
-            proof: None,
-        }
-    }
-
-    pub fn new_with_proof(
-        tree: &'a mut MerkleTree<H>,
-        db: &'a KeyValueDB<DB, ID>,
-        proof: MultiProof,
-    ) -> Self {
-        Self {
-            tree,
-            db,
-            current_path: Default::default(),
-            current_nodes_heights: Vec::with_capacity(251),
-            current_partial_nodes_heights: Vec::with_capacity(251),
-            leaf_hash: None,
-            proof: Some(proof),
         }
     }
 
@@ -143,7 +168,24 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
     pub fn seek_to(&mut self, key: &BitSlice) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
         self.traverse_to(&mut NoopVisitor(PhantomData), key)
     }
+}
 
+impl<'a, H: StarkHash, DB: BonsaiDatabase, ID: Id> PartialMerkleTreeIterator<'a, H, DB, ID> {
+    pub fn new(tree: &'a mut MerkleTree<H>, db: &'a KeyValueDB<DB, ID>, proof: MultiProof) -> Self {
+        Self {
+            tree,
+            db,
+            current_path: Default::default(),
+            current_partial_nodes_heights: Vec::with_capacity(251),
+            leaf_hash: None,
+            proof,
+        }
+    }
+}
+
+impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeTraverser<H, DB, ID>
+    for MerkleTreeIterator<'a, H, DB, ID>
+{
     fn traverse_one(
         &mut self,
         node_id: NodeKey,
@@ -208,7 +250,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         Ok(Some(child_key))
     }
 
-    pub fn traverse_to<V: NodeVisitor<H>>(
+    fn traverse_to<V: NodeVisitor<H>>(
         &mut self,
         visitor: &mut V,
         key: &BitSlice,
@@ -240,11 +282,11 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
                 .partition_point(|(_node, height)| *height < shared_prefix_len)
         };
         log::trace!(
-            "Truncate pre node id cache shared_prefix_len={:?}, nodes_new_len={:?}, cur_path_nodes_heights={:?}, current_path={:?}",
-            shared_prefix_len, nodes_new_len,
-            self.current_nodes_heights,
-            self.current_path,
-        );
+                "Truncate pre node id cache shared_prefix_len={:?}, nodes_new_len={:?}, cur_path_nodes_heights={:?}, current_path={:?}",
+                shared_prefix_len, nodes_new_len,
+                self.current_nodes_heights,
+                self.current_path,
+            );
 
         self.current_nodes_heights.truncate(nodes_new_len);
         self.current_path.truncate(key.len());
@@ -293,8 +335,12 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
             );
         }
     }
+}
 
-    fn traverse_one_partial(
+impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
+    PartialMerkleTreeTraverser<H, DB, ID> for PartialMerkleTreeIterator<'a, H, DB, ID>
+{
+    fn traverse_one(
         &mut self,
         node_id: NodeKey,
         height: usize,
@@ -353,12 +399,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         } else {
             // Get remaining nodes from full proof
             // This happens in first iteration with empty trie
-            let proof_clone = self
-                .proof
-                .clone()
-                .ok_or(IteratorError::ProofNotFound)?
-                .0
-                .clone();
+            let proof_clone = self.proof.clone().0.clone();
 
             // Child of last node in partial trie doesn't exist
             // Get it from proof since it hasn't been modified
@@ -406,7 +447,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         }
     }
 
-    pub fn traverse_to_partial<V: PartialNodeVisitor<H>>(
+    fn traverse_to<V: PartialNodeVisitor<H>>(
         &mut self,
         visitor: &mut V,
         key: &BitSlice,
@@ -439,7 +480,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
             if let Some((node_id, height)) = self.current_partial_nodes_heights.pop() {
                 self.current_path.truncate(height);
                 // visitor.visit_partial_node::<DB>(self.tree, node_id, height)?;
-                self.traverse_one_partial(node_id, height, key)?
+                self.traverse_one(node_id, height, key)?
             } else {
                 // If we have already consstructed partial trie then we have node key for current root
                 //But its only one try because it should be updated
@@ -451,12 +492,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
                     self.current_path.clear();
 
                     // Get root hash from proof
-                    let proof_clone = self
-                        .proof
-                        .clone()
-                        .ok_or(IteratorError::ProofNotFound)?
-                        .0
-                        .clone();
+                    let proof_clone = self.proof.clone().0.clone();
 
                     // Get root node from proof by its hash
                     let Some(root_node) = proof_clone.get(&root) else {
@@ -506,7 +542,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
                 return Ok(());
             };
 
-            next_to_visit = self.traverse_one_partial(node_id, self.current_path.len(), key)?;
+            next_to_visit = self.traverse_one(node_id, self.current_path.len(), key)?;
 
             // if let Some(next_id) = next_to_visit {
             //     visitor.visit_partial_node::<DB>(self.tree, next_id, self.current_path.len())?;

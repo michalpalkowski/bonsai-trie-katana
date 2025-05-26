@@ -1,3 +1,4 @@
+use super::iterator::PartialMerkleTreeTraverser;
 use super::{
     iterator::NoopPartialVisitor,
     merkle_node::{hash_binary_node, hash_edge_node, BinaryNode, Direction, EdgeNode, Node},
@@ -13,6 +14,7 @@ use crate::trie::tree::bitslice_to_bytes;
 use crate::trie::tree::InsertOrRemove;
 use crate::trie::TrieKey;
 use crate::ByteVec;
+use crate::DBError;
 use crate::Id;
 use crate::ProofNode;
 use crate::{databases::RocksDB, BonsaiStorageError, MultiProof};
@@ -37,6 +39,12 @@ pub enum PartialTrieError {
     SetValueZero,
     #[error("Invalid node handle - expected hash but got in-memory node")]
     InvalidNodeHandle,
+}
+
+impl<DBE: DBError> From<PartialTrieError> for BonsaiStorageError<DBE> {
+    fn from(err: PartialTrieError) -> Self {
+        BonsaiStorageError::Trie(err.to_string())
+    }
 }
 
 #[derive(Debug)]
@@ -67,18 +75,17 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         value: Felt,
         proof: MultiProof,
         original_root: Felt,
-    ) -> Result<Felt, PartialTrieError> {
+    ) -> Result<Felt, BonsaiStorageError<DB::DatabaseError>> {
         if value == Felt::ZERO {
-            return Err(PartialTrieError::SetValueZero); // TODO: implement delete_leaf
+            return Err(PartialTrieError::SetValueZero.into());
         }
-        log::trace!("SET KEY: {:?}", key);
-        log::trace!("SET VALUE: {:?}", value);
-        log::trace!("SET ORIGINAL ROOT: {:?}", original_root);
+        println!("SET KEY: {:?}", key);
+        println!("SET VALUE: {:?}", value);
+        println!("SET ORIGINAL ROOT: {:?}", original_root);
 
-        let path_nodes =
-            self.get_partial_path_from_existing_trie(&key, proof, original_root, db)?;
+        let path_nodes = self.get_path_for_partial_trie(&key, proof, original_root, db)?;
 
-        log::trace!("Path nodes: {:?}", path_nodes);
+        println!("Path nodes: {:?}", path_nodes);
 
         let calculated_root = self.build_from_visited_nodes(path_nodes.clone(), &key, value, db)?;
 
@@ -92,7 +99,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         key: &BitSlice,
         value: Felt,
         db: &mut KeyValueDB<DB, ID>,
-    ) -> Result<Felt, PartialTrieError> {
+    ) -> Result<Felt, BonsaiStorageError<DB::DatabaseError>> {
         let key_bytes = bitslice_to_bytes(key);
         match path_nodes.last() {
             Some((node_key, height)) => {
@@ -134,7 +141,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         value: Felt,
         path_nodes: &[(NodeKey, usize)],
         db: &mut KeyValueDB<DB, ID>,
-    ) -> Result<(Felt, PartialTrieNode), PartialTrieError> {
+    ) -> Result<(Felt, PartialTrieNode), BonsaiStorageError<DB::DatabaseError>> {
         let mut node = self
             .trie
             .get_proof_node_mut::<DB>(*node_key)
@@ -287,7 +294,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                     Ok((final_hash, node))
                 } else {
                     log::trace!("Binary node not at path end - should fetch full trie");
-                    Err(PartialTrieError::NodeNotFound)
+                    Err(PartialTrieError::NodeNotFound.into())
                 }
             }
         }
@@ -374,24 +381,23 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
     /// Traverses the current partial tree and collects existing elements.
     /// If an element is missing, selects it from the proof.
     /// If the tree is empty, completes it from the proof.
-    pub fn get_partial_path_from_existing_trie<DB: BonsaiDatabase, ID: Id>(
+    pub fn get_path_for_partial_trie<DB: BonsaiDatabase, ID: Id>(
         &mut self,
         key: &BitSlice,
         proof: MultiProof,
         original_root: Felt,
         db: &KeyValueDB<DB, ID>,
-    ) -> Result<Vec<(NodeKey, usize)>, PartialTrieError> {
+    ) -> Result<Vec<(NodeKey, usize)>, BonsaiStorageError<DB::DatabaseError>> {
         let proof_keys = vec![key];
-        let mut iter = self.trie.iter_partial(db, proof);
+        let mut iter = self.trie.iter_partial_trie(db, proof);
         let mut visitor = NoopPartialVisitor::<H>(PhantomData);
 
         for key in proof_keys {
             let key = key.as_ref();
             if key.len() != self.max_height as usize {
-                return Err(PartialTrieError::KeyLength);
+                return Err(PartialTrieError::KeyLength.into());
             }
-            iter.traverse_to_partial::<NoopPartialVisitor<H>>(&mut visitor, key, original_root)
-                .unwrap();
+            iter.traverse_to::<NoopPartialVisitor<H>>(&mut visitor, key, original_root)?;
         }
         let path_nodes = iter.current_partial_nodes_heights;
 
