@@ -34,20 +34,6 @@ impl NodeHandle {
         }
     }
 }
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Encode, Decode)]
-pub enum ProofNodeHandle {
-    Hash(Felt),
-    InMemory(NodeKey),
-}
-
-impl ProofNodeHandle {
-    pub fn as_hash(self) -> Option<Felt> {
-        match self {
-            ProofNodeHandle::Hash(felt) => Some(felt),
-            ProofNodeHandle::InMemory(_) => None,
-        }
-    }
-}
 
 impl fmt::Debug for NodeHandle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -55,87 +41,6 @@ impl fmt::Debug for NodeHandle {
             NodeHandle::Hash(felt) => write!(f, "Hash({:#x})", felt),
             NodeHandle::InMemory(node_id) => write!(f, "InMemory({:?})", node_id),
         }
-    }
-}
-
-impl fmt::Debug for ProofNodeHandle {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ProofNodeHandle::Hash(felt) => write!(f, "Hash({:#x})", felt),
-            ProofNodeHandle::InMemory(node_id) => write!(f, "InMemory({:?})", node_id),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum PartialTrieNode {
-    /// A branch node with exactly two children.
-    Binary(BinaryPartialTrieNode),
-    /// Describes a path connecting two other nodes.
-    Edge(EdgePartialTrieNode),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct BinaryPartialTrieNode {
-    pub height: u64,
-    pub left: ProofNodeHandle,
-    pub right: ProofNodeHandle,
-    pub left_handle: ProofNodeHandle,
-    pub right_handle: ProofNodeHandle,
-}
-
-impl BinaryPartialTrieNode {
-    pub fn get_child(&self, direction: Direction) -> ProofNodeHandle {
-        match direction {
-            Direction::Left => self.left,
-            Direction::Right => self.right,
-        }
-    }
-
-    pub fn get_child_handle(&self, direction: Direction) -> ProofNodeHandle {
-        match direction {
-            Direction::Left => self.left_handle,
-            Direction::Right => self.right_handle,
-        }
-    }
-
-    pub fn get_child_handle_mut(&mut self, direction: Direction) -> &mut ProofNodeHandle {
-        match direction {
-            Direction::Left => &mut self.left_handle,
-            Direction::Right => &mut self.right_handle,
-        }
-    }
-}
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct EdgePartialTrieNode {
-    pub path: Path,
-    pub height: u64,
-    pub child: ProofNodeHandle,
-    pub child_handle: ProofNodeHandle,
-}
-
-impl EdgePartialTrieNode {
-    pub fn path_matches(&self, key: &BitSlice, node_height: usize) -> bool {
-        assert_eq!(self.height as usize, node_height);
-        let lower_bound = node_height.min(key.len());
-        let upper_bound = (node_height + self.path.0.len()).min(key.len());
-        log::trace!(
-            "path_matches {:b}{lower_bound}..{upper_bound} ({}) - {:b}0..{}",
-            &key[lower_bound..upper_bound],
-            upper_bound - lower_bound,
-            self.path.0,
-            self.path.len()
-        );
-        self.path.starts_with(&key[lower_bound..upper_bound])
-    }
-    pub fn common_path(&self, key: &BitSlice) -> &BitSlice {
-        let key_path = key.iter().skip(self.height as usize);
-        let common_length = key_path
-            .zip(self.path.0.iter())
-            .take_while(|(a, b)| a == b)
-            .count();
-
-        &self.path.0[..common_length]
     }
 }
 
@@ -340,6 +245,102 @@ pub fn hash_edge_node<H: StarkHash>(path: &Path, child_hash: Felt) -> Felt {
 
     let length = Felt::from_bytes_be(&length);
     H::hash(&child_hash, &felt_path) + length
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Encode, Decode)]
+pub enum ProofNodeHandle {
+    Hash(Felt),
+    InMemory(NodeKey),
+}
+
+impl ProofNodeHandle {
+    pub fn as_hash(self) -> Option<Felt> {
+        match self {
+            ProofNodeHandle::Hash(felt) => Some(felt),
+            ProofNodeHandle::InMemory(_) => None,
+        }
+    }
+}
+
+impl fmt::Debug for ProofNodeHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ProofNodeHandle::Hash(felt) => write!(f, "Hash({:#x})", felt),
+            ProofNodeHandle::InMemory(node_id) => write!(f, "InMemory({:?})", node_id),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PartialTrieNode {
+    /// A branch node with exactly two children.
+    Binary(BinaryPartialTrieNode),
+    /// Describes a path connecting two other nodes.
+    Edge(EdgePartialTrieNode),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BinaryPartialTrieNode {
+    pub height: u64,
+    pub left: ProofNodeHandle,
+    pub right: ProofNodeHandle,
+    pub left_handle: ProofNodeHandle,
+    pub right_handle: ProofNodeHandle,
+}
+
+impl BinaryPartialTrieNode {
+    pub fn get_child(&self, direction: Direction) -> ProofNodeHandle {
+        match direction {
+            Direction::Left => self.left,
+            Direction::Right => self.right,
+        }
+    }
+
+    pub fn get_child_handle(&self, direction: Direction) -> ProofNodeHandle {
+        match direction {
+            Direction::Left => self.left_handle,
+            Direction::Right => self.right_handle,
+        }
+    }
+
+    pub fn get_child_handle_mut(&mut self, direction: Direction) -> &mut ProofNodeHandle {
+        match direction {
+            Direction::Left => &mut self.left_handle,
+            Direction::Right => &mut self.right_handle,
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct EdgePartialTrieNode {
+    pub path: Path,
+    pub height: u64,
+    pub child: ProofNodeHandle,
+    pub child_handle: ProofNodeHandle,
+}
+
+impl EdgePartialTrieNode {
+    pub fn path_matches(&self, key: &BitSlice, node_height: usize) -> bool {
+        assert_eq!(self.height as usize, node_height);
+        let lower_bound = node_height.min(key.len());
+        let upper_bound = (node_height + self.path.0.len()).min(key.len());
+        log::trace!(
+            "path_matches {:b}{lower_bound}..{upper_bound} ({}) - {:b}0..{}",
+            &key[lower_bound..upper_bound],
+            upper_bound - lower_bound,
+            self.path.0,
+            self.path.len()
+        );
+        self.path.starts_with(&key[lower_bound..upper_bound])
+    }
+    pub fn common_path(&self, key: &BitSlice) -> &BitSlice {
+        let key_path = key.iter().skip(self.height as usize);
+        let common_length = key_path
+            .zip(self.path.0.iter())
+            .take_while(|(a, b)| a == b)
+            .count();
+
+        &self.path.0[..common_length]
+    }
 }
 
 #[test]

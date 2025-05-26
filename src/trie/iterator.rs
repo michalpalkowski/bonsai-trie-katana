@@ -7,13 +7,30 @@ use crate::trie::merkle_node::PartialTrieNode;
 use crate::trie::merkle_node::{EdgePartialTrieNode, ProofNodeHandle};
 use crate::{
     id::Id, key_value_db::KeyValueDB, trie::merkle_node::BinaryPartialTrieNode, BitSlice,
-    BonsaiDatabase, BonsaiStorageError, MultiProof, ProofNode, Vec,
+    BonsaiDatabase, BonsaiStorageError, DBError, MultiProof, ProofNode, Vec,
 };
 use core::{fmt, marker::PhantomData};
 use starknet_types_core::{felt::Felt, hash::StarkHash};
 use std::collections::HashMap;
+use thiserror::Error;
 
-/// This trait's function will be called on every node visited during a seek operation.
+#[derive(Debug, Error)]
+pub enum IteratorError {
+    #[error("Invalid node handle - expected hash but got in-memory node")]
+    InvalidNodeHandle,
+    #[error("Proof not found")]
+    ProofNotFound,
+    #[error("Node not found in proof")]
+    NodeNotFoundInProof,
+}
+
+impl<DBE: DBError> From<IteratorError> for BonsaiStorageError<DBE> {
+    fn from(err: IteratorError) -> Self {
+        BonsaiStorageError::Trie(err.to_string())
+    }
+}
+
+/// Trait for handling node visits during seek operations
 pub trait NodeVisitor<H: StarkHash> {
     fn visit_node<DB: BonsaiDatabase>(
         &mut self,
@@ -35,6 +52,7 @@ impl<H: StarkHash> NodeVisitor<H> for NoopVisitor<H> {
     }
 }
 
+/// Trait for handling partial node visits during seek operations
 pub trait PartialNodeVisitor<H: StarkHash> {
     fn visit_partial_node<DB: BonsaiDatabase>(
         &mut self,
@@ -153,7 +171,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
             }
         };
 
-        // path_matches is false when the edge node doesn't match the path we want to preload so we return nothing.
+        // Return None if path doesn't match or we've reached key length
         log::trace!(
             "Compare: path_matches={path_matches} {:?} ?= {:b} (node_handle {node_handle:?})",
             self.current_path,
@@ -314,7 +332,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
             }
         };
 
-        //I need to add here condition for path mathes probably
+        // Return None if path doesn't match or we've reached key length
         if !path_matches || self.current_path.len() >= key.len() {
             self.leaf_hash = if path_matches && self.current_path.len() == key.len() {
                 proof_node_child.as_hash()
@@ -333,13 +351,21 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
         if let Some(existing_node_id) = next_node_id {
             Ok(Some(existing_node_id))
         } else {
-            //HERE IS THE POINT WHERE WE NEED TO GET THE REST OF THE NODES FROM FULL PROOF
-            // WE WILL BE HERE IN FIRST ITERATION BECAUSE WE HAVE EMPTY TRIE
-            let proof_clone = self.proof.clone().unwrap().0.clone();
+            // Get remaining nodes from full proof
+            // This happens in first iteration with empty trie
+            let proof_clone = self
+                .proof
+                .clone()
+                .ok_or(IteratorError::ProofNotFound)?
+                .0
+                .clone();
 
-            // its a child of the last node in partial trie and it does not exist in partial trie
-            //so it wasn't changed so we can just get it from proof
-            let Some(child_node) = proof_clone.get(&proof_node_child.as_hash().unwrap()) else {
+            // Child of last node in partial trie doesn't exist
+            // Get it from proof since it hasn't been modified
+            let child_hash = proof_node_child
+                .as_hash()
+                .ok_or(IteratorError::InvalidNodeHandle)?;
+            let Some(child_node) = proof_clone.get(&child_hash) else {
                 return Ok(None);
             };
 
@@ -350,19 +376,15 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
                         left: ProofNodeHandle::Hash(*left),
                         right: ProofNodeHandle::Hash(*right),
                         left_handle: ProofNodeHandle::Hash(Felt::ZERO),
-                        right_handle: ProofNodeHandle::Hash(Felt::ZERO), //Felt::Zero means None
+                        right_handle: ProofNodeHandle::Hash(Felt::ZERO),
                     })
                 }
-                ProofNode::Edge { child, path } => {
-                    PartialTrieNode::Edge(EdgePartialTrieNode {
-                        child: ProofNodeHandle::Hash(*child),
-                        //make sure this is correct
-                        height: self.current_path.len() as u64,
-                        // height: child_height as u64,
-                        path: path.clone(),
-                        child_handle: ProofNodeHandle::Hash(Felt::ZERO),
-                    })
-                }
+                ProofNode::Edge { child, path } => PartialTrieNode::Edge(EdgePartialTrieNode {
+                    child: ProofNodeHandle::Hash(*child),
+                    height: self.current_path.len() as u64,
+                    path: path.clone(),
+                    child_handle: ProofNodeHandle::Hash(Felt::ZERO),
+                }),
             };
 
             let new_node_id = self.tree.proof_nodes.insert(child);
@@ -429,7 +451,12 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
                     self.current_path.clear();
 
                     // Get root hash from proof
-                    let proof_clone = self.proof.clone().unwrap().0.clone();
+                    let proof_clone = self
+                        .proof
+                        .clone()
+                        .ok_or(IteratorError::ProofNotFound)?
+                        .0
+                        .clone();
 
                     // Get root node from proof by its hash
                     let Some(root_node) = proof_clone.get(&root) else {
