@@ -7,10 +7,6 @@ use super::{
     proof::PartialPath,
     tree::{MerkleTree, NodeKey, RootHandle},
 };
-use crate::{
-    error::BonsaiStorageError, format, hash_map, id::Id, vec, BitSlice, BonsaiDatabase, ByteVec,
-    EncodeExt, HashMap, HashSet, KeyValueDB, ToString, Vec,
-};
 use crate::fmt;
 use crate::id::BasicId;
 use crate::trie::merkle_node::PartialTrieNode;
@@ -22,11 +18,15 @@ use crate::trie::TrieKey;
 use crate::DBError;
 use crate::ProofNode;
 use crate::{databases::RocksDB, MultiProof};
+use crate::{
+    error::BonsaiStorageError, format, hash_map, id::Id, vec, BitSlice, BonsaiDatabase, ByteVec,
+    EncodeExt, HashMap, HashSet, KeyValueDB, ToString, Vec,
+};
 use crate::{trie::merkle_node::NodeHandle, BitVec};
 use core::marker::PhantomData;
 use core::mem;
-use rocksdb::DB;
 use parity_scale_codec::Decode;
+use rocksdb::DB;
 use starknet_types_core::{felt::Felt, hash::StarkHash};
 
 #[derive(Debug, thiserror::Error)]
@@ -443,9 +443,13 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
             ProofNodeHandle::Hash(hash) => return Ok(PartialTrieNodeOrFelt::Felt(*hash)),
             ProofNodeHandle::InMemory(node_id) => *node_id,
         };
-        let node = self.trie.proof_nodes.get(node_id).ok_or(BonsaiStorageError::Trie(
-            "Couldn't fetch node in the temporary storage".to_string(),
-        ))?;
+        let node = self
+            .trie
+            .proof_nodes
+            .get(node_id)
+            .ok_or(BonsaiStorageError::Trie(
+                "Couldn't fetch node in the temporary storage".to_string(),
+            ))?;
         Ok(PartialTrieNodeOrFelt::Node(node))
     }
 
@@ -579,9 +583,13 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         hashes: &mut impl Iterator<Item = Felt>,
     ) -> Result<Felt, BonsaiStorageError<DB::DatabaseError>> {
         println!("Node id when committing: {:?}", node_id);
-        match self.trie.proof_nodes.remove(node_id).ok_or(BonsaiStorageError::Trie(
-            "Couldn't fetch node in the temporary storage".to_string(),
-        ))? {
+        match self
+            .trie
+            .proof_nodes
+            .remove(node_id)
+            .ok_or(BonsaiStorageError::Trie(
+                "Couldn't fetch node in the temporary storage".to_string(),
+            ))? {
             PartialTrieNode::Binary(mut binary) => {
                 let left_path = path.new_with_direction(Direction::Left);
                 let left_hash = match binary.left_handle {
@@ -681,7 +689,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         Ok(updates.into_iter())
     }
 
-     /// # Panics
+    /// # Panics
     ///
     /// Calling this function when the tree has uncommited changes is invalid as the hashes need to be recomputed.
     pub fn root_hash<DB: BonsaiDatabase, ID: Id>(
@@ -772,7 +780,9 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
 mod tests {
     use super::*;
     use crate::{
-        databases::{create_rocks_db, RocksDB, RocksDBConfig}, id::{BasicId, BasicIdBuilder}, BonsaiStorage, BonsaiStorageConfig, MerkleTrees, PartialMerkleTrees
+        databases::{create_rocks_db, RocksDB, RocksDBConfig},
+        id::{BasicId, BasicIdBuilder},
+        BonsaiStorage, BonsaiStorageConfig, MerkleTrees, PartialMerkleTrees,
     };
     use bitvec::{bits, prelude::Msb0};
     use proptest::collection::vec;
@@ -1463,24 +1473,36 @@ mod tests {
         let identifier4 = vec![4];
 
         let config = BonsaiStorageConfig::default();
-        let mut base_tree: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen, MerkleTrees<Pedersen, RocksDB<'_, BasicId>, BasicId>> =
-            BonsaiStorage::new(
-                RocksDB::new(&base_db, RocksDBConfig::default()),
-                config.clone(),
-                8,
-            );
-        let mut tree_to_compare: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen, MerkleTrees<Pedersen, RocksDB<'_, BasicId>, BasicId>> =
-            BonsaiStorage::new(
-                RocksDB::new(&tree_to_compare_db, RocksDBConfig::default()),
-                config.clone(),
-                8,
-            );
-        let mut reference_tree: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen, MerkleTrees<Pedersen, RocksDB<'_, BasicId>, BasicId>> =
-            BonsaiStorage::new(
-                RocksDB::new(&reference_db, RocksDBConfig::default()),
-                config.clone(),
-                8,
-            );
+        let mut base_tree: BonsaiStorage<
+            BasicId,
+            RocksDB<'_, BasicId>,
+            Pedersen,
+            MerkleTrees<Pedersen, RocksDB<'_, BasicId>, BasicId>,
+        > = BonsaiStorage::new(
+            RocksDB::new(&base_db, RocksDBConfig::default()),
+            config.clone(),
+            8,
+        );
+        let mut tree_to_compare: BonsaiStorage<
+            BasicId,
+            RocksDB<'_, BasicId>,
+            Pedersen,
+            MerkleTrees<Pedersen, RocksDB<'_, BasicId>, BasicId>,
+        > = BonsaiStorage::new(
+            RocksDB::new(&tree_to_compare_db, RocksDBConfig::default()),
+            config.clone(),
+            8,
+        );
+        let mut reference_tree: BonsaiStorage<
+            BasicId,
+            RocksDB<'_, BasicId>,
+            Pedersen,
+            MerkleTrees<Pedersen, RocksDB<'_, BasicId>, BasicId>,
+        > = BonsaiStorage::new(
+            RocksDB::new(&reference_db, RocksDBConfig::default()),
+            config.clone(),
+            8,
+        );
         let mut fork_tree: BonsaiStorage<
             BasicId,
             RocksDB<'_, BasicId>,
@@ -1530,7 +1552,7 @@ mod tests {
             println!("Inserting value: {:?}", value);
             base_tree.insert(&identifier, key, value).unwrap();
             reference_tree.insert(&identifier3, key, value).unwrap(); // thats a referencje tree
-            // println!("bonsai trie: {:?}", bonsai_storage1.tries.trees.entry(smallvec::smallvec![1]).unwrap().proof_nodes);
+                                                                      // println!("bonsai trie: {:?}", bonsai_storage1.tries.trees.entry(smallvec::smallvec![1]).unwrap().proof_nodes);
         }
 
         base_tree.commit(id_builder.new_id()).unwrap();
@@ -1540,7 +1562,7 @@ mod tests {
         let mut calculated_roots: Vec<Felt> = Vec::new();
         let mut i = 0;
         let mut current_root = original_root;
-        
+
         let tree1 = base_tree
             .tries
             .trees
@@ -1552,9 +1574,9 @@ mod tests {
             .get_multi_proof(&base_tree.tries.db, proof_key_one.iter())
             .unwrap();
         println!("Proof for one: {:?}", proof_for_one);
-    
+
         let partial_trie = PartialTrie::<Pedersen>::new(identifier4.clone().into(), 8);
-        
+
         for (key, value) in keys.iter().zip(values.iter()).skip(3) {
             i += 1;
             println!("ITERATION: {:?}", i);
@@ -1592,9 +1614,6 @@ mod tests {
                     .collect::<HashMap<_, _>>()
             );
 
-
-
-
             reference_tree.commit(id_builder.new_id()).unwrap();
             let reference_tree_root = reference_tree.root_hash(&identifier3).unwrap();
             println!("Reference tree root: {:?}\n", reference_tree_root);
@@ -1603,7 +1622,11 @@ mod tests {
                 .insert_with_proof(&identifier4, key, value, proof, original_root)
                 .unwrap();
 
-            let fork_single_tree = fork_tree.tries.trees.get_mut(&smallvec::smallvec![4]).unwrap();
+            let fork_single_tree = fork_tree
+                .tries
+                .trees
+                .get_mut(&smallvec::smallvec![4])
+                .unwrap();
 
             // println!("Fork single tree before commit: {:?}\n", fork_single_tree.trie.proof_nodes);
             fork_single_tree.commit(&mut fork_tree.tries.db).unwrap();
@@ -1611,10 +1634,6 @@ mod tests {
             let root_hash = fork_single_tree.root_hash(&mut fork_tree.tries.db).unwrap();
             // println!("Fork single tree after commit: {:?}\n", fork_single_tree.trie.proof_nodes);
             println!("Root hash after commit: {:?}\n", root_hash);
-
-
-
-
 
             println!("Partial TRIE: {:?}\n", partial_trie.trie.proof_nodes);
             println!(

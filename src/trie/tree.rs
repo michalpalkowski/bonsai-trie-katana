@@ -228,8 +228,10 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
             Some(RootHandle::Empty) => Ok(None),
             None => {
                 // load the node
-                let id = self
-                    .load_db_partial_trie_node(db, &TrieKey::new(&self.identifier, TrieKeyType::Trie, &[0]))?;
+                let id = self.load_db_partial_trie_node(
+                    db,
+                    &TrieKey::new(&self.identifier, TrieKeyType::Trie, &[0]),
+                )?;
 
                 match id {
                     Some(id) => {

@@ -414,7 +414,6 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
         println!("Next node id: {:?}", next_node_id);
 
         if let Some(existing_node_id) = next_node_id {
-
             // Update parent ref after loading from db where we save only hashes
             match self.tree.get_proof_node_mut::<DB>(node_id)? {
                 PartialTrieNode::Binary(binary_node) => {
