@@ -403,13 +403,34 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
             return Ok(None); // end of traversal
         }
 
+        println!("Proof node handle: {:?}", proof_node_handle);
+
         let next_node_id = self.tree.load_proof_node_handle::<DB, ID>(
             self.db,
             proof_node_handle,
             &self.current_path,
         )?;
 
+        println!("Next node id: {:?}", next_node_id);
+
         if let Some(existing_node_id) = next_node_id {
+
+            // Update parent ref after loading from db where we save only hashes
+            match self.tree.get_proof_node_mut::<DB>(node_id)? {
+                PartialTrieNode::Binary(binary_node) => {
+                    *binary_node.get_child_handle_mut(Direction::from(
+                        *self
+                            .current_path
+                            .last()
+                            .expect("current path should have a length > 0 at this point"),
+                    )) = ProofNodeHandle::InMemory(existing_node_id);
+                }
+                PartialTrieNode::Edge(edge_node) => {
+                    edge_node.child_handle = ProofNodeHandle::InMemory(existing_node_id);
+                }
+            };
+            println!("Existing node id: {:?}", existing_node_id);
+
             Ok(Some(existing_node_id))
         } else {
             // Get remaining nodes from full proof
@@ -428,6 +449,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
             let child = match child_node {
                 ProofNode::Binary { left, right } => {
                     PartialTrieNode::Binary(BinaryPartialTrieNode {
+                        hash: None,
                         height: self.current_path.len() as u64,
                         left: ProofNodeHandle::Hash(*left),
                         right: ProofNodeHandle::Hash(*right),
@@ -436,6 +458,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
                     })
                 }
                 ProofNode::Edge { child, path } => PartialTrieNode::Edge(EdgePartialTrieNode {
+                    hash: None,
                     child: ProofNodeHandle::Hash(*child),
                     height: self.current_path.len() as u64,
                     path: path.clone(),
@@ -499,48 +522,56 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
             } else {
                 // If we have already consstructed partial trie then we have node key for current root
                 //But its only one try because it should be updated
-                if let Some(root_node_id) = self.tree.current_root_node_id {
-                    // visitor.visit_partial_node::<DB>(self.tree, root_node_id, 0)?;
-                    Some(root_node_id)
-                } else {
-                    // Start from tree root.
-                    self.current_path.clear();
+                // if let Some(root_node_id) = self.tree.current_root_node_id {
+                //     // visitor.visit_partial_node::<DB>(self.tree, root_node_id, 0)?;
+                //     Some(root_node_id)
+                let root_node_id = match self.tree.load_root_node_partial_trie(self.db)? {
+                    Some(root_node_id) => Some(root_node_id),
+                    None => {
+                        // empty tree, not found
+                        // Start from tree root.
+                        self.current_path.clear();
 
-                    // Get root hash from proof
-                    let proof_clone = self.proof.clone().0.clone();
+                        // Get root hash from proof
+                        let proof_clone = self.proof.clone().0.clone();
 
-                    // Get root node from proof by its hash
-                    let Some(root_node) = proof_clone.get(&root) else {
-                        self.leaf_hash = None;
-                        return Ok(());
-                    };
+                        // Get root node from proof by its hash
+                        let Some(root_node) = proof_clone.get(&root) else {
+                            self.leaf_hash = None;
+                            return Ok(());
+                        };
 
-                    // Children are set recursively in traverse_one_partial
-                    let partial_root_node = match root_node {
-                        ProofNode::Binary { left, right } => {
-                            PartialTrieNode::Binary(BinaryPartialTrieNode {
-                                height: self.current_path.len() as u64,
-                                left: ProofNodeHandle::Hash(*left),
-                                right: ProofNodeHandle::Hash(*right),
-                                left_handle: ProofNodeHandle::Hash(Felt::ZERO), //Felt::Zero means None
-                                right_handle: ProofNodeHandle::Hash(Felt::ZERO), //Felt::Zero means None
-                            })
-                        }
-                        ProofNode::Edge { child, path } => {
-                            PartialTrieNode::Edge(EdgePartialTrieNode {
-                                child: ProofNodeHandle::Hash(*child),
-                                height: self.current_path.len() as u64,
-                                path: path.clone(),
-                                child_handle: ProofNodeHandle::Hash(Felt::ZERO), //Felt::Zero means None
-                            })
-                        }
-                    };
+                        // Children are set recursively in traverse_one_partial
+                        let partial_root_node = match root_node {
+                            ProofNode::Binary { left, right } => {
+                                PartialTrieNode::Binary(BinaryPartialTrieNode {
+                                    hash: None,
+                                    height: self.current_path.len() as u64,
+                                    left: ProofNodeHandle::Hash(*left),
+                                    right: ProofNodeHandle::Hash(*right),
+                                    left_handle: ProofNodeHandle::Hash(Felt::ZERO), //Felt::Zero means None
+                                    right_handle: ProofNodeHandle::Hash(Felt::ZERO), //Felt::Zero means None
+                                })
+                            }
+                            ProofNode::Edge { child, path } => {
+                                PartialTrieNode::Edge(EdgePartialTrieNode {
+                                    hash: None,
+                                    child: ProofNodeHandle::Hash(*child),
+                                    height: self.current_path.len() as u64,
+                                    path: path.clone(),
+                                    child_handle: ProofNodeHandle::Hash(Felt::ZERO), //Felt::Zero means None
+                                })
+                            }
+                        };
 
-                    let root_node_id = self.tree.proof_nodes.insert(partial_root_node);
-                    self.tree.current_root_node_id = Some(root_node_id);
-
-                    Some(root_node_id)
-                }
+                        let root_node_id = self.tree.proof_nodes.insert(partial_root_node);
+                        // self.tree.current_root_node_id = Some(root_node_id);
+                        self.tree.root_node = Some(RootHandle::Loaded(root_node_id));
+                        println!("Root node id: {:?}", root_node_id);
+                        Some(root_node_id)
+                    }
+                };
+                root_node_id
             };
 
         log::trace!(

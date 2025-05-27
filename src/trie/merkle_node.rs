@@ -271,7 +271,7 @@ impl fmt::Debug for ProofNodeHandle {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Encode, Decode)]
 pub enum PartialTrieNode {
     /// A branch node with exactly two children.
     Binary(BinaryPartialTrieNode),
@@ -279,8 +279,25 @@ pub enum PartialTrieNode {
     Edge(EdgePartialTrieNode),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+impl PartialTrieNode {
+    pub fn as_binary(&self) -> Option<&BinaryPartialTrieNode> {
+        match self {
+            PartialTrieNode::Binary(node) => Some(node),
+            _ => None,
+        }
+    }
+
+    pub fn get_hash(&self) -> Option<Felt> {
+        match self {
+            PartialTrieNode::Binary(binary) => binary.hash,
+            PartialTrieNode::Edge(edge) => edge.hash,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Encode, Decode)]
 pub struct BinaryPartialTrieNode {
+    pub hash: Option<Felt>,
     pub height: u64,
     pub left: ProofNodeHandle,
     pub right: ProofNodeHandle,
@@ -310,8 +327,9 @@ impl BinaryPartialTrieNode {
         }
     }
 }
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Encode, Decode)]
 pub struct EdgePartialTrieNode {
+    pub hash: Option<Felt>,
     pub path: Path,
     pub height: u64,
     pub child: ProofNodeHandle,
