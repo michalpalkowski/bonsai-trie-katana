@@ -377,17 +377,11 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
                 );
                 let next_direction = Direction::from(key[self.current_path.len()]);
                 self.current_path.push(bool::from(next_direction));
-                (
-                    binary_node.get_child_handle(next_direction),
-                    true,
-                )
+                (binary_node.get_child_handle(next_direction), true)
             }
             PartialTrieNode::Edge(edge_node) => {
                 self.current_path.extend_from_bitslice(&edge_node.path);
-                (
-                    edge_node.child,
-                    edge_node.path_matches(key, height),
-                )
+                (edge_node.child, edge_node.path_matches(key, height))
             }
         };
 

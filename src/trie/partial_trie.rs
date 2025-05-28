@@ -148,7 +148,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         let key_bytes = bitslice_to_bytes(key);
         match path_nodes.last() {
             Some((node_key, height)) => {
-                let node=
+                let node =
                     self.build_node_recursive(node_key, *height, key, value, &path_nodes, db)?;
                 self.trie.proof_nodes[*node_key] = node;
                 Ok(Felt::ZERO)
@@ -218,7 +218,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                     .cache_leaf_modified
                     .insert(key_bytes, InsertOrRemove::Insert(value));
 
-                let new_id= if new_path.is_empty() {
+                let new_id = if new_path.is_empty() {
                     ProofNodeHandle::Hash(value)
                 } else {
                     let edge_node = PartialTrieNode::Edge(EdgePartialTrieNode {
@@ -230,7 +230,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                     let edge_id = self.trie.proof_nodes.insert(edge_node);
 
                     ProofNodeHandle::InMemory(edge_id)
-                    
                 };
 
                 let old_id = if old_path.is_empty() {
@@ -245,7 +244,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
 
                     let edge_id = self.trie.proof_nodes.insert(edge_node);
                     ProofNodeHandle::InMemory(edge_id)
-                    
                 };
 
                 let new_direction = Direction::from(key[branch_height]);
@@ -752,12 +750,16 @@ mod tests {
                 config.clone(),
                 8,
             );
-        let mut fork_tree: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen, PartialMerkleTrees<Pedersen, RocksDB<'_, BasicId>, BasicId>> =
-            BonsaiStorage::new_partial(
-                RocksDB::new(&fork_db, RocksDBConfig::default()),
-                config.clone(),
-                8,
-            );
+        let mut fork_tree: BonsaiStorage<
+            BasicId,
+            RocksDB<'_, BasicId>,
+            Pedersen,
+            PartialMerkleTrees<Pedersen, RocksDB<'_, BasicId>, BasicId>,
+        > = BonsaiStorage::new_partial(
+            RocksDB::new(&fork_db, RocksDBConfig::default()),
+            config.clone(),
+            8,
+        );
 
         let mut id_builder = BasicIdBuilder::new();
 
@@ -859,10 +861,11 @@ mod tests {
             );
             reference_tree.commit(id_builder.new_id()).unwrap();
 
-            fork_tree.insert_with_proof(&identifier4, key, value, proof, original_root).unwrap();
+            fork_tree
+                .insert_with_proof(&identifier4, key, value, proof, original_root)
+                .unwrap();
             fork_tree.commit(id_builder.new_id()).unwrap();
             let fork_hash = fork_tree.root_hash(&identifier4).unwrap();
-
 
             calculated_roots.push(fork_hash);
             current_root = fork_hash;
@@ -884,14 +887,14 @@ mod tests {
         assert_eq!(current_root, actual_root, "Next root calculation failed");
 
         fork_tree
-        .insert_with_proof(
-            &identifier4,
-            one,
-            &Felt::from(13),
-            proof_for_one,
-            original_root,
-        )
-        .unwrap();
+            .insert_with_proof(
+                &identifier4,
+                one,
+                &Felt::from(13),
+                proof_for_one,
+                original_root,
+            )
+            .unwrap();
 
         fork_tree.commit(id_builder.new_id()).unwrap();
         let calculated_updated_root = fork_tree.root_hash(&identifier4).unwrap();
@@ -993,12 +996,16 @@ mod tests {
                 config.clone(),
                 height,
             );
-        let mut forked_bonsai_storage: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen, PartialMerkleTrees<Pedersen, RocksDB<'_, BasicId>, BasicId>> =
-            BonsaiStorage::new_partial(
-                RocksDB::new(&fork_db, RocksDBConfig::default()),
-                config.clone(),
-                height,
-            );
+        let mut forked_bonsai_storage: BonsaiStorage<
+            BasicId,
+            RocksDB<'_, BasicId>,
+            Pedersen,
+            PartialMerkleTrees<Pedersen, RocksDB<'_, BasicId>, BasicId>,
+        > = BonsaiStorage::new_partial(
+            RocksDB::new(&fork_db, RocksDBConfig::default()),
+            config.clone(),
+            height,
+        );
 
         let mut id_builder = BasicIdBuilder::new();
 
@@ -1038,7 +1045,9 @@ mod tests {
             println!("\nITERATION: {:?}\n", i);
             println!("\nProof: {:?}\n", proof);
 
-            forked_bonsai_storage.insert_with_proof(&fork_identifier, key, value, proof, original_root).unwrap();
+            forked_bonsai_storage
+                .insert_with_proof(&fork_identifier, key, value, proof, original_root)
+                .unwrap();
             forked_bonsai_storage.commit(id_builder.new_id()).unwrap();
             let fork_hash = forked_bonsai_storage.root_hash(&fork_identifier).unwrap();
 
@@ -1068,7 +1077,10 @@ mod tests {
                 .unwrap();
             println!("Expected root: {:?}", expected_root);
             println!("Actual root: {:?}", actual_root);
-            assert_eq!(expected_root, actual_root, "Expected root is not equal to actual root");
+            assert_eq!(
+                expected_root, actual_root,
+                "Expected root is not equal to actual root"
+            );
         }
     }
     #[test]
@@ -1195,7 +1207,9 @@ mod tests {
             reference_tree.insert(&identifier3, key, value).unwrap();
             reference_tree.commit(id_builder.new_id()).unwrap();
 
-            fork_tree.insert_with_proof(&identifier4, key, value, proof, original_root).unwrap();
+            fork_tree
+                .insert_with_proof(&identifier4, key, value, proof, original_root)
+                .unwrap();
             fork_tree.commit(id_builder.new_id()).unwrap();
             let fork_hash = fork_tree.root_hash(&identifier4).unwrap();
 
