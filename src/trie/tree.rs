@@ -400,7 +400,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         assert_eq!(self.nodes.iter().collect::<Vec<_>>(), vec![]);
     }
 
-    fn get_node_or_felt<DB: BonsaiDatabase>(
+    pub(crate) fn get_node_or_felt<DB: BonsaiDatabase>(
         &self,
         node_handle: &NodeHandle,
     ) -> Result<NodeOrFelt, BonsaiStorageError<DB::DatabaseError>> {
@@ -414,7 +414,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         Ok(NodeOrFelt::Node(node))
     }
 
-    fn compute_root_hash<DB: BonsaiDatabase>(
+    pub(crate) fn compute_root_hash<DB: BonsaiDatabase>(
         &self,
         hashes: &mut Vec<Felt>,
     ) -> Result<Felt, BonsaiStorageError<DB::DatabaseError>> {
@@ -1024,7 +1024,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
     }
 
     /// Get the node of the trie that corresponds to the path.
-    fn get_trie_branch_in_db_from_path<DB: BonsaiDatabase, ID: Id>(
+    pub(crate) fn get_trie_branch_in_db_from_path<DB: BonsaiDatabase, ID: Id>(
         death_row: &HashSet<TrieKey>,
         identifier: &[u8],
         db: &KeyValueDB<DB, ID>,

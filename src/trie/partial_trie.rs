@@ -127,203 +127,14 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         &self,
         node_handle: &NodeHandle,
     ) -> Result<NodeOrFelt, BonsaiStorageError<DB::DatabaseError>> {
-        let node_id = match node_handle {
-            NodeHandle::Hash(hash) => return Ok(NodeOrFelt::Felt(*hash)),
-            NodeHandle::InMemory(node_id) => *node_id,
-        };
-        let node = self
-            .trie
-            .nodes
-            .get(node_id)
-            .ok_or(BonsaiStorageError::Trie(
-                "Couldn't fetch node in the temporary storage".to_string(),
-            ))?;
-        Ok(NodeOrFelt::Node(node))
+        self.trie.get_node_or_felt::<DB>(node_handle)
     }
 
     fn compute_root_hash<DB: BonsaiDatabase>(
         &self,
         hashes: &mut Vec<Felt>,
     ) -> Result<Felt, BonsaiStorageError<DB::DatabaseError>> {
-        let handle = match &self.trie.root_node {
-            Some(RootHandle::Loaded(node_id)) => *node_id,
-            Some(RootHandle::Empty) => return Ok(Felt::ZERO),
-            None => {
-                return Err(BonsaiStorageError::Trie(
-                    "Root node is not loaded".to_string(),
-                ))
-            }
-        };
-        let Some(node) = self.trie.nodes.get(handle) else {
-            return Err(BonsaiStorageError::Trie(
-                "Could not fetch root node from storage".to_string(),
-            ));
-        };
-        self.compute_hashes::<DB>(node, Path::default(), hashes)
-    }
-
-    /// Compute the hashes of all of the updated nodes in the merkle tree. This step
-    /// is separate from [`commit_subtree`] as it is done in parallel using rayon.
-    /// Computed hashes are pushed to the `hashes` vector, depth first.
-    fn compute_hashes<DB: BonsaiDatabase>(
-        &self,
-        node: &Node,
-        path: Path,
-        hashes: &mut Vec<Felt>,
-    ) -> Result<Felt, BonsaiStorageError<DB::DatabaseError>> {
-        use Node::*;
-
-        println!("Node to compute hashes: {:?}", node);
-        match node {
-            Binary(binary) => {
-                // we check if we have one or two changed children
-
-                let left_path = path.new_with_direction(Direction::Left);
-                let node_left = self.get_node_or_felt::<DB>(&binary.left)?;
-                let right_path = path.new_with_direction(Direction::Right);
-                let node_right = self.get_node_or_felt::<DB>(&binary.right)?;
-
-                let (left_hash, right_hash) = match (node_left, node_right) {
-                    // #[cfg(feature = "std")]
-                    (NodeOrFelt::Node(left), NodeOrFelt::Node(right)) => {
-                        // two children: use rayon
-                        let (left, right) = rayon::join(
-                            || self.compute_hashes::<DB>(left, left_path, hashes),
-                            || {
-                                let mut hashes = vec![];
-                                let felt =
-                                    self.compute_hashes::<DB>(right, right_path, &mut hashes)?;
-                                Ok::<_, BonsaiStorageError<DB::DatabaseError>>((felt, hashes))
-                            },
-                        );
-                        let (left_hash, (right_hash, hashes2)) = (left?, right?);
-                        hashes.extend(hashes2);
-                        (left_hash, right_hash)
-                    }
-                    (left, right) => {
-                        let left_hash = match left {
-                            NodeOrFelt::Felt(felt) => felt,
-                            NodeOrFelt::Node(node) => {
-                                self.compute_hashes::<DB>(node, left_path, hashes)?
-                            }
-                        };
-                        let right_hash = match right {
-                            NodeOrFelt::Felt(felt) => felt,
-                            NodeOrFelt::Node(node) => {
-                                self.compute_hashes::<DB>(node, right_path, hashes)?
-                            }
-                        };
-                        (left_hash, right_hash)
-                    }
-                };
-
-                let hash = hash_binary_node::<H>(left_hash, right_hash);
-
-                hashes.push(hash);
-                Ok(hash)
-            }
-
-            Edge(edge) => {
-                let mut child_path = path.clone();
-                child_path.0.extend(&edge.path.0);
-                let child_hash = match self.get_node_or_felt::<DB>(&edge.child)? {
-                    NodeOrFelt::Felt(felt) => felt,
-                    NodeOrFelt::Node(node) => {
-                        self.compute_hashes::<DB>(node, child_path, hashes)?
-                    }
-                };
-
-                let hash = hash_edge_node::<H>(&edge.path, child_hash);
-                hashes.push(hash);
-
-                Ok(hash)
-            }
-        }
-    }
-
-    /// Persists any changes in this subtree to storage.
-    ///
-    /// This necessitates recursively calculating the hash of, and
-    /// in turn persisting, any changed child nodes. This is necessary
-    /// as the parent node's hash relies on its children hashes.
-    /// Hash computation is done in parallel with [`compute_hashes`] beforehand.
-    ///
-    /// In effect, the entire tree gets persisted.
-    ///
-    /// # Arguments
-    ///
-    /// * `node_handle` - The top node from the subtree to commit.
-    /// * `hashes` - The precomputed hashes for the subtree as returned by [`compute_hashes`].
-    ///   The order is depth first, left to right.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the precomputed `hashes` do not match the length of the modified subtree.
-    fn commit_subtree<DB: BonsaiDatabase>(
-        &mut self,
-        updates: &mut HashMap<TrieKey, InsertOrRemove<ByteVec>>,
-        node_id: NodeKey,
-        path: Path,
-        hashes: &mut impl Iterator<Item = Felt>,
-    ) -> Result<Felt, BonsaiStorageError<DB::DatabaseError>> {
-        println!("Node id when committing: {:?}", node_id);
-        match self
-            .trie
-            .nodes
-            .remove(node_id)
-            .ok_or(BonsaiStorageError::Trie(
-                "Couldn't fetch node in the temporary storage".to_string(),
-            ))? {
-            Node::Binary(mut binary) => {
-                let left_path = path.new_with_direction(Direction::Left);
-                let left_hash = match binary.left {
-                    NodeHandle::Hash(left_hash) => left_hash,
-                    NodeHandle::InMemory(node_id) => {
-                        self.commit_subtree::<DB>(updates, node_id, left_path, hashes)?
-                    }
-                };
-                let right_path = path.new_with_direction(Direction::Right);
-                let right_hash = match binary.right {
-                    NodeHandle::Hash(right_hash) => right_hash,
-                    NodeHandle::InMemory(node_id) => {
-                        self.commit_subtree::<DB>(updates, node_id, right_path, hashes)?
-                    }
-                };
-
-                let hash = hashes.next().expect("mismatched hash state");
-                // let hash = hash_binary_node::<H>(left_hash, right_hash);
-                binary.hash = Some(hash);
-                binary.left = NodeHandle::Hash(left_hash);
-                binary.right = NodeHandle::Hash(right_hash);
-                let key_bytes: ByteVec = path.into();
-                updates.insert(
-                    TrieKey::new(&self.trie.identifier, TrieKeyType::Trie, &key_bytes),
-                    InsertOrRemove::Insert(Node::Binary(binary).encode_bytevec()),
-                );
-                Ok(hash)
-            }
-            Node::Edge(mut edge) => {
-                let mut child_path = path.clone();
-                child_path.0.extend(&edge.path.0);
-                let child_hash = match edge.child {
-                    NodeHandle::Hash(right_hash) => right_hash,
-                    NodeHandle::InMemory(node_id) => {
-                        self.commit_subtree::<DB>(updates, node_id, child_path, hashes)?
-                    }
-                };
-
-                let hash = hashes.next().expect("mismatched hash state");
-                edge.hash = Some(hash);
-                // let hash = hash_edge_node::<H>(&edge.path, child_hash);
-                edge.child = NodeHandle::Hash(child_hash);
-                let key_bytes: ByteVec = path.into();
-                updates.insert(
-                    TrieKey::new(&self.trie.identifier, TrieKeyType::Trie, &key_bytes),
-                    InsertOrRemove::Insert(Node::Edge(edge).encode_bytevec()),
-                );
-                Ok(hash)
-            }
-        }
+        self.trie.compute_root_hash::<DB>(hashes)
     }
 
     /// Calculate all the new hashes and the root hash.
@@ -334,40 +145,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         impl Iterator<Item = (TrieKey, InsertOrRemove<ByteVec>)>,
         BonsaiStorageError<DB::DatabaseError>,
     > {
-        let mut updates = HashMap::new();
-        for node_key in mem::take(&mut self.trie.death_row) {
-            updates.insert(node_key, InsertOrRemove::Remove);
-        }
-
-        if let Some(RootHandle::Loaded(node_id)) = &self.trie.root_node {
-            // compute hashes
-            let mut hashes = vec![];
-            self.compute_root_hash::<DB>(&mut hashes)?;
-            println!("Hashes: {:?}", hashes);
-            // commit the tree
-            self.commit_subtree::<DB>(
-                &mut updates,
-                *node_id,
-                Path::default(),
-                &mut hashes.into_iter(),
-            )?;
-        }
-
-        self.trie.root_node = None; // unloaded
-
-        for (key, value) in mem::take(&mut self.trie.cache_leaf_modified) {
-            updates.insert(
-                TrieKey::new(&self.trie.identifier, TrieKeyType::Flat, &key),
-                match value {
-                    InsertOrRemove::Insert(value) => InsertOrRemove::Insert(value.encode_bytevec()),
-                    InsertOrRemove::Remove => InsertOrRemove::Remove,
-                },
-            );
-        }
-        // #[cfg(test)]
-        // self.assert_empty(); // we should have visited the whole tree
-
-        Ok(updates.into_iter())
+        self.trie.get_updates::<DB>()
     }
 
     /// # Panics
@@ -377,31 +155,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         &self,
         db: &KeyValueDB<DB, ID>,
     ) -> Result<Felt, BonsaiStorageError<DB::DatabaseError>> {
-        match self.trie.root_node {
-            Some(RootHandle::Empty) => Ok(Felt::ZERO),
-            Some(RootHandle::Loaded(node_id)) => {
-                let node = self.trie.nodes.get(node_id).ok_or_else(|| {
-                    BonsaiStorageError::Trie("Could not fetch root node from storage".into())
-                })?;
-                node.get_hash().ok_or_else(|| {
-                    BonsaiStorageError::Trie("The tree has uncommited changes".into())
-                })
-            }
-            None => {
-                let Some(node) = Self::get_trie_branch_in_db_from_path(
-                    &self.trie.death_row,
-                    &self.trie.identifier,
-                    db,
-                    &Path::default(),
-                )?
-                else {
-                    return Ok(Felt::ZERO);
-                };
-                Ok(node
-                    .get_hash()
-                    .expect("The fetched node has no computed hash"))
-            }
-        }
+        self.trie.root_hash::<DB, ID>(db)
     }
 
     /// Get the node of the trie that corresponds to the path.
@@ -411,23 +165,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         db: &KeyValueDB<DB, ID>,
         path: &Path,
     ) -> Result<Option<Node>, BonsaiStorageError<DB::DatabaseError>> {
-        log::trace!("getting: {:b}", path.0);
-
-        let path: ByteVec = path.into();
-        let key = TrieKey::new(identifier, TrieKeyType::Trie, &path);
-
-        if death_row.contains(&key) {
-            return Ok(None);
-        }
-
-        db.get(&key)?
-            .map(|node| {
-                log::trace!("got: {:?}", node);
-                Node::decode(&mut node.as_slice()).map_err(|err| {
-                    BonsaiStorageError::Trie(format!("Couldn't decode node: {}", err))
-                })
-            })
-            .map_or(Ok(None), |r| r.map(Some))
+        MerkleTree::<H>::get_trie_branch_in_db_from_path(death_row, identifier, db, path)
     }
 
     // Commit a single merkle tree
@@ -436,25 +174,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         &mut self,
         db: &mut KeyValueDB<DB, ID>,
     ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
-        let db_changes = self.get_updates::<DB>()?;
-
-        let mut batch = db.create_batch();
-        for (key, value) in db_changes {
-            match value {
-                InsertOrRemove::Insert(value) => {
-                    log::trace!("committing insert {:?} => {:?}", key, value);
-                    db.insert(&key, &value, Some(&mut batch))?;
-                }
-                InsertOrRemove::Remove => {
-                    log::trace!("committing remove {:?}", key);
-                    db.remove(&key, Some(&mut batch))?;
-                }
-            }
-        }
-        db.write_batch(batch).unwrap();
-        log::trace!("commit finished");
-
-        Ok(())
+        self.trie.commit::<DB, ID>(db)
     }
 }
 #[cfg(test)]
