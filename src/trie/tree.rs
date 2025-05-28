@@ -206,13 +206,10 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
             return Ok(None);
         }
         let node = db.get(key)?;
-        println!("Node before decode: {:?}", node);
         let Some(node) = node else { return Ok(None) };
 
         let node = PartialTrieNode::decode(&mut node.as_slice())?;
-        println!("Node after decode: {:?}", node);
         let key = self.proof_nodes.insert(node);
-        println!("Inserted Key: {:?}", key);
 
         Ok(Some(key))
     }
