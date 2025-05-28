@@ -301,8 +301,6 @@ pub struct BinaryPartialTrieNode {
     pub height: u64,
     pub left: ProofNodeHandle,
     pub right: ProofNodeHandle,
-    pub left_handle: ProofNodeHandle,
-    pub right_handle: ProofNodeHandle,
 }
 
 impl BinaryPartialTrieNode {
@@ -315,15 +313,15 @@ impl BinaryPartialTrieNode {
 
     pub fn get_child_handle(&self, direction: Direction) -> ProofNodeHandle {
         match direction {
-            Direction::Left => self.left_handle,
-            Direction::Right => self.right_handle,
+            Direction::Left => self.left,
+            Direction::Right => self.right,
         }
     }
 
     pub fn get_child_handle_mut(&mut self, direction: Direction) -> &mut ProofNodeHandle {
         match direction {
-            Direction::Left => &mut self.left_handle,
-            Direction::Right => &mut self.right_handle,
+            Direction::Left => &mut self.left,
+            Direction::Right => &mut self.right,
         }
     }
 }
@@ -333,7 +331,6 @@ pub struct EdgePartialTrieNode {
     pub path: Path,
     pub height: u64,
     pub child: ProofNodeHandle,
-    pub child_handle: ProofNodeHandle,
 }
 
 impl EdgePartialTrieNode {

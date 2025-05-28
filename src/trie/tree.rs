@@ -409,6 +409,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
             // compute hashes
             let mut hashes = vec![];
             self.compute_root_hash::<DB>(&mut hashes)?;
+            println!("Reference hashes: {:?}\n", hashes);
             // commit the tree
             self.commit_subtree::<DB>(
                 &mut updates,

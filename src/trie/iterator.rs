@@ -368,7 +368,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
 
         println!("\nPartial trie node: {:?}\n", partial_trie_node);
 
-        let (proof_node_child, proof_node_handle, path_matches) = match partial_trie_node {
+        let (proof_node_handle, path_matches) = match partial_trie_node {
             PartialTrieNode::Binary(binary_node) => {
                 log::trace!(
                     "Continue from binary node current_path={:?} key={:b}",
@@ -378,7 +378,6 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
                 let next_direction = Direction::from(key[self.current_path.len()]);
                 self.current_path.push(bool::from(next_direction));
                 (
-                    binary_node.get_child(next_direction),
                     binary_node.get_child_handle(next_direction),
                     true,
                 )
@@ -387,7 +386,6 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
                 self.current_path.extend_from_bitslice(&edge_node.path);
                 (
                     edge_node.child,
-                    edge_node.child_handle,
                     edge_node.path_matches(key, height),
                 )
             }
@@ -396,7 +394,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
         // Return None if path doesn't match or we've reached key length
         if !path_matches || self.current_path.len() >= key.len() {
             self.leaf_hash = if path_matches && self.current_path.len() == key.len() {
-                proof_node_child.as_hash()
+                proof_node_handle.as_hash()
             } else {
                 None
             };
@@ -425,7 +423,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
                     )) = ProofNodeHandle::InMemory(existing_node_id);
                 }
                 PartialTrieNode::Edge(edge_node) => {
-                    edge_node.child_handle = ProofNodeHandle::InMemory(existing_node_id);
+                    edge_node.child = ProofNodeHandle::InMemory(existing_node_id);
                 }
             };
             println!("Existing node id: {:?}", existing_node_id);
@@ -438,7 +436,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
 
             // Child of last node in partial trie doesn't exist
             // Get it from proof since it hasn't been modified
-            let child_hash = proof_node_child
+            let child_hash = proof_node_handle
                 .as_hash()
                 .ok_or(IteratorError::InvalidNodeHandle)?;
             let Some(child_node) = proof_clone.get(&child_hash) else {
@@ -452,8 +450,6 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
                         height: self.current_path.len() as u64,
                         left: ProofNodeHandle::Hash(*left),
                         right: ProofNodeHandle::Hash(*right),
-                        left_handle: ProofNodeHandle::Hash(Felt::ZERO),
-                        right_handle: ProofNodeHandle::Hash(Felt::ZERO),
                     })
                 }
                 ProofNode::Edge { child, path } => PartialTrieNode::Edge(EdgePartialTrieNode {
@@ -461,7 +457,6 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
                     child: ProofNodeHandle::Hash(*child),
                     height: self.current_path.len() as u64,
                     path: path.clone(),
-                    child_handle: ProofNodeHandle::Hash(Felt::ZERO),
                 }),
             };
 
@@ -477,7 +472,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
                     )) = ProofNodeHandle::InMemory(new_node_id);
                 }
                 PartialTrieNode::Edge(edge_node) => {
-                    edge_node.child_handle = ProofNodeHandle::InMemory(new_node_id);
+                    edge_node.child = ProofNodeHandle::InMemory(new_node_id);
                 }
             };
             Ok(Some(new_node_id))
@@ -548,8 +543,6 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
                                     height: self.current_path.len() as u64,
                                     left: ProofNodeHandle::Hash(*left),
                                     right: ProofNodeHandle::Hash(*right),
-                                    left_handle: ProofNodeHandle::Hash(Felt::ZERO), //Felt::Zero means None
-                                    right_handle: ProofNodeHandle::Hash(Felt::ZERO), //Felt::Zero means None
                                 })
                             }
                             ProofNode::Edge { child, path } => {
@@ -558,7 +551,6 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
                                     child: ProofNodeHandle::Hash(*child),
                                     height: self.current_path.len() as u64,
                                     path: path.clone(),
-                                    child_handle: ProofNodeHandle::Hash(Felt::ZERO), //Felt::Zero means None
                                 })
                             }
                         };

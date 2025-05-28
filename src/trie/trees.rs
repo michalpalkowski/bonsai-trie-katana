@@ -336,6 +336,17 @@ impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id>
         &self.db
     }
 
+    pub(crate) fn root_hash(
+        &self,
+        identifier: &[u8],
+    ) -> Result<Felt, BonsaiStorageError<DB::DatabaseError>> {
+        if let Some(tree) = self.trees.get(identifier) {
+            Ok(tree.trie.root_hash(&self.db)?)
+        } else {
+            PartialTrie::<H>::new(identifier.into(), self.max_height).root_hash(&self.db)
+        }
+    }
+
     // #[cfg(test)]
     // pub fn dump(&self) {
     //     log::trace!("====== NUMBER OF TREES: {} ======", self.trees.len());
@@ -406,40 +417,40 @@ impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id>
     //         .map_err(|e| e.into())
     // }
 
-    // pub(crate) fn commit(&mut self) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
-    //     #[cfg(feature = "std")]
-    //     use rayon::prelude::*;
+    pub(crate) fn commit(&mut self) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
+        #[cfg(feature = "std")]
+        use rayon::prelude::*;
 
-    //     #[cfg(not(feature = "std"))]
-    //     let db_changes = self
-    //         .trees
-    //         .iter_mut()
-    //         .map(|(_, tree)| tree.get_updates::<DB>());
-    //     #[cfg(feature = "std")]
-    //     let db_changes = self
-    //         .trees
-    //         .par_iter_mut()
-    //         .map(|(_, tree)| tree.get_updates::<DB>())
-    //         .collect_vec_list()
-    //         .into_iter()
-    //         .flatten();
+        #[cfg(not(feature = "std"))]
+        let db_changes = self
+            .trees
+            .iter_mut()
+            .map(|(_, tree)| tree.get_updates::<DB>());
+        #[cfg(feature = "std")]
+        let db_changes = self
+            .trees
+            .par_iter_mut()
+            .map(|(_, tree)| tree.get_updates::<DB>())
+            .collect_vec_list()
+            .into_iter()
+            .flatten();
 
-    //     let mut batch = self.db.create_batch();
-    //     for changes in db_changes {
-    //         for (key, value) in changes? {
-    //             match value {
-    //                 InsertOrRemove::Insert(value) => {
-    //                     self.db.insert(&key, &value, Some(&mut batch))?;
-    //                 }
-    //                 InsertOrRemove::Remove => {
-    //                     self.db.remove(&key, Some(&mut batch))?;
-    //                 }
-    //             }
-    //         }
-    //     }
-    //     self.db.write_batch(batch)?;
-    //     Ok(())
-    // }
+        let mut batch = self.db.create_batch();
+        for changes in db_changes {
+            for (key, value) in changes? {
+                match value {
+                    InsertOrRemove::Insert(value) => {
+                        self.db.insert(&key, &value, Some(&mut batch))?;
+                    }
+                    InsertOrRemove::Remove => {
+                        self.db.remove(&key, Some(&mut batch))?;
+                    }
+                }
+            }
+        }
+        self.db.write_batch(batch)?;
+        Ok(())
+    }
 
     // pub(crate) fn get_proof(
     //     &self,

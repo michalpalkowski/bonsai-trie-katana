@@ -603,9 +603,28 @@ impl<ChangeID: Id, DB: BonsaiDatabase, H: StarkHash + Send + Sync>
             tree.set(&mut self.tries.db, key, *value, proof, original_root)
         } else {
             let mut tree = PartialTrie::new(identifier.into(), self.tries.max_height);
-            let root = tree.set(&mut self.tries.db, key, *value, proof, original_root)?;
+            let root: Felt = tree.set(&mut self.tries.db, key, *value, proof, original_root)?;
             self.tries.trees.insert(identifier.into(), tree);
             Ok(root)
         }
+    }
+
+    /// Get trie root hash at the latest commit
+    pub fn root_hash(
+        &self,
+        identifier: &[u8],
+    ) -> Result<BonsaiTrieHash, BonsaiStorageError<DB::DatabaseError>> {
+        self.tries.root_hash(identifier)
+    }
+
+    /// Update trie and database using all changes since the last commit.
+    pub fn commit(
+        &mut self,
+        id: ChangeID,
+    ) -> Result<(), BonsaiStorageError<<DB as BonsaiDatabase>::DatabaseError>> {
+        self.tries.commit()?;
+        self.tries.db_mut().commit(id)?;
+        // self.tries.db_mut().create_snapshot(id);
+        Ok(())
     }
 }
