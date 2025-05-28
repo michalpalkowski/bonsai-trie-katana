@@ -5,12 +5,11 @@ use slotmap::SlotMap;
 use starknet_types_core::{felt::Felt, hash::StarkHash};
 
 use crate::trie::merkle_node::{hash_binary_node, hash_edge_node};
-use crate::trie::partial_trie::PartialTrieError;
 use crate::{
     error::BonsaiStorageError, format, hash_map, id::Id, vec, BitSlice, BonsaiDatabase, ByteVec,
     EncodeExt, HashMap, HashSet, KeyValueDB, ToString, Vec,
 };
-use crate::{BitVec, MultiProof, ProofNode};
+use crate::{BitVec, MultiProof};
 
 use super::iterator::MerkleTreeIterator;
 use super::{

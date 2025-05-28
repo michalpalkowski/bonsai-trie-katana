@@ -8,13 +8,13 @@ use crate::{
     id::Id,
     key_value_db::KeyValueDB,
     trie::{
-        iterator::{NodeVisitor, PartialNodeVisitor},
+        iterator::NodeVisitor,
         merkle_node::{Node, NodeHandle},
-        tree::{NodeKey, RootHandle},
+        tree::NodeKey,
     },
     BitSlice, BitVec, BonsaiDatabase, BonsaiStorageError, HashMap, HashSet,
 };
-use core::{marker::PhantomData, mem, ops::DerefMut};
+use core::{marker::PhantomData, mem};
 use hashbrown::hash_set;
 use starknet_types_core::{felt::Felt, hash::StarkHash};
 
