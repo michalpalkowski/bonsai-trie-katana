@@ -1,4 +1,5 @@
 use super::iterator::PartialMerkleTreeTraverser;
+use super::tree::NodeOrFelt;
 use super::trie_db::TrieKeyType;
 use super::{
     iterator::NoopPartialVisitor,
@@ -67,7 +68,6 @@ impl<H: StarkHash> fmt::Debug for PartialTrie<H> {
             .field("trie", &self.trie)
             .field("current_root_node_id", &self.trie.current_root_node_id)
             .field("nodes", &self.trie.nodes)
-            .field("proof_nodes", &self.trie.proof_nodes)
             .field("identifier", &self.trie.identifier)
             .field("death_row", &self.trie.death_row)
             .field("cache_leaf_modified", &self.trie.cache_leaf_modified)
@@ -150,7 +150,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
             Some((node_key, height)) => {
                 let node =
                     self.build_node_recursive(node_key, *height, key, value, &path_nodes, db)?;
-                self.trie.proof_nodes[*node_key] = node;
+                self.trie.nodes[*node_key] = node;
                 Ok(Felt::ZERO)
             }
             None => {
@@ -160,13 +160,13 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
 
                 // Handle empty tree case
                 let edge_node_hash = hash_edge_node::<H>(&Path(key.to_bitvec()), value);
-                let edge_node = PartialTrieNode::Edge(EdgePartialTrieNode {
+                let edge_node = Node::Edge(EdgeNode {
                     hash: Some(edge_node_hash),
                     path: Path(key.to_bitvec()),
                     height: 0,
-                    child: ProofNodeHandle::Hash(value),
+                    child: NodeHandle::Hash(value),
                 });
-                let node_id = self.trie.proof_nodes.insert(edge_node);
+                let node_id = self.trie.nodes.insert(edge_node);
                 self.trie.root_node = Some(RootHandle::Loaded(node_id));
                 self.trie
                     .cache_leaf_modified
@@ -186,22 +186,22 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         value: Felt,
         path_nodes: &[(NodeKey, usize)],
         db: &mut KeyValueDB<DB, ID>,
-    ) -> Result<PartialTrieNode, BonsaiStorageError<DB::DatabaseError>> {
+    ) -> Result<Node, BonsaiStorageError<DB::DatabaseError>> {
         let mut node = self
             .trie
-            .get_proof_node_mut::<DB>(*node_key)
+            .get_node_mut::<DB>(*node_key)
             .map_err(|_| PartialTrieError::NodeNotFound)?
             .clone();
 
         match &mut node {
-            PartialTrieNode::Edge(edge) => {
+            Node::Edge(edge) => {
                 log::trace!("EDGE: {:?}", edge);
                 let common = edge.common_path(key);
                 let branch_height = edge.height as usize + common.len();
 
                 let key_bytes = bitslice_to_bytes(key);
                 if branch_height == key.len() {
-                    edge.child = ProofNodeHandle::Hash(value);
+                    edge.child = NodeHandle::Hash(value);
                     self.trie
                         .cache_leaf_modified
                         .insert(key_bytes, InsertOrRemove::Insert(value));
@@ -219,31 +219,31 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                     .insert(key_bytes, InsertOrRemove::Insert(value));
 
                 let new_id = if new_path.is_empty() {
-                    ProofNodeHandle::Hash(value)
+                    NodeHandle::Hash(value)
                 } else {
-                    let edge_node = PartialTrieNode::Edge(EdgePartialTrieNode {
+                    let edge_node = Node::Edge(EdgeNode {
                         hash: None,
                         path: Path(new_path),
                         height: child_height as u64,
-                        child: ProofNodeHandle::Hash(value),
+                        child: NodeHandle::Hash(value),
                     });
-                    let edge_id = self.trie.proof_nodes.insert(edge_node);
+                    let edge_id = self.trie.nodes.insert(edge_node);
 
-                    ProofNodeHandle::InMemory(edge_id)
+                    NodeHandle::InMemory(edge_id)
                 };
 
                 let old_id = if old_path.is_empty() {
                     edge.child
                 } else {
-                    let edge_node = PartialTrieNode::Edge(EdgePartialTrieNode {
+                    let edge_node = Node::Edge(EdgeNode {
                         hash: None,
                         path: Path(old_path),
                         height: child_height as u64,
                         child: edge.child,
                     });
 
-                    let edge_id = self.trie.proof_nodes.insert(edge_node);
-                    ProofNodeHandle::InMemory(edge_id)
+                    let edge_id = self.trie.nodes.insert(edge_node);
+                    NodeHandle::InMemory(edge_id)
                 };
 
                 let new_direction = Direction::from(key[branch_height]);
@@ -252,7 +252,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                     Direction::Right => (old_id, new_id),
                 };
 
-                let branch = PartialTrieNode::Binary(BinaryPartialTrieNode {
+                let branch = Node::Binary(BinaryNode {
                     hash: None,
                     height: branch_height as u64,
                     left: left_child,
@@ -262,13 +262,13 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 let new_node = if common.is_empty() {
                     branch
                 } else {
-                    let branch_node_key = self.trie.proof_nodes.insert(branch);
+                    let branch_node_key = self.trie.nodes.insert(branch);
 
-                    let new_node = PartialTrieNode::Edge(EdgePartialTrieNode {
+                    let new_node = Node::Edge(EdgeNode {
                         hash: None,
                         path: Path(common.to_bitvec()),
                         height: edge.height,
-                        child: ProofNodeHandle::InMemory(branch_node_key),
+                        child: NodeHandle::InMemory(branch_node_key),
                     });
                     new_node
                 };
@@ -280,7 +280,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 self.trie.death_row.insert(TrieKey::Trie(key_bytes));
                 Ok(node)
             }
-            PartialTrieNode::Binary(binary) => {
+            Node::Binary(binary) => {
                 log::trace!("BINARY: {:?}", binary);
                 let child_height = binary.height + 1;
                 let direction = Direction::from(key[binary.height as usize]);
@@ -288,10 +288,10 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 if child_height as usize == key.len() {
                     match direction {
                         Direction::Left => {
-                            binary.left = ProofNodeHandle::Hash(value);
+                            binary.left = NodeHandle::Hash(value);
                         }
                         Direction::Right => {
-                            binary.right = ProofNodeHandle::Hash(value);
+                            binary.right = NodeHandle::Hash(value);
                         }
                     };
                     let key_bytes = bitslice_to_bytes(key);
@@ -310,20 +310,20 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
 
     fn get_node_or_felt<DB: BonsaiDatabase>(
         &self,
-        node_handle: &ProofNodeHandle,
-    ) -> Result<PartialTrieNodeOrFelt, BonsaiStorageError<DB::DatabaseError>> {
+        node_handle: &NodeHandle,
+    ) -> Result<NodeOrFelt, BonsaiStorageError<DB::DatabaseError>> {
         let node_id = match node_handle {
-            ProofNodeHandle::Hash(hash) => return Ok(PartialTrieNodeOrFelt::Felt(*hash)),
-            ProofNodeHandle::InMemory(node_id) => *node_id,
+            NodeHandle::Hash(hash) => return Ok(NodeOrFelt::Felt(*hash)),
+            NodeHandle::InMemory(node_id) => *node_id,
         };
         let node = self
             .trie
-            .proof_nodes
+            .nodes
             .get(node_id)
             .ok_or(BonsaiStorageError::Trie(
                 "Couldn't fetch node in the temporary storage".to_string(),
             ))?;
-        Ok(PartialTrieNodeOrFelt::Node(node))
+        Ok(NodeOrFelt::Node(node))
     }
 
     fn compute_root_hash<DB: BonsaiDatabase>(
@@ -339,7 +339,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 ))
             }
         };
-        let Some(node) = self.trie.proof_nodes.get(handle) else {
+        let Some(node) = self.trie.nodes.get(handle) else {
             return Err(BonsaiStorageError::Trie(
                 "Could not fetch root node from storage".to_string(),
             ));
@@ -352,11 +352,11 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
     /// Computed hashes are pushed to the `hashes` vector, depth first.
     fn compute_hashes<DB: BonsaiDatabase>(
         &self,
-        node: &PartialTrieNode,
+        node: &Node,
         path: Path,
         hashes: &mut Vec<Felt>,
     ) -> Result<Felt, BonsaiStorageError<DB::DatabaseError>> {
-        use PartialTrieNode::*;
+        use Node::*;
 
         println!("Node to compute hashes: {:?}", node);
         match node {
@@ -364,17 +364,13 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 // we check if we have one or two changed children
 
                 let left_path = path.new_with_direction(Direction::Left);
-                println!("Left path: {:?}", left_path);
                 let node_left = self.get_node_or_felt::<DB>(&binary.left)?;
-                println!("Node left: {:?}", node_left);
                 let right_path = path.new_with_direction(Direction::Right);
-                println!("Right path: {:?}", right_path);
                 let node_right = self.get_node_or_felt::<DB>(&binary.right)?;
-                println!("Node right: {:?}", node_right);
 
                 let (left_hash, right_hash) = match (node_left, node_right) {
                     // #[cfg(feature = "std")]
-                    (PartialTrieNodeOrFelt::Node(left), PartialTrieNodeOrFelt::Node(right)) => {
+                    (NodeOrFelt::Node(left), NodeOrFelt::Node(right)) => {
                         // two children: use rayon
                         let (left, right) = rayon::join(
                             || self.compute_hashes::<DB>(left, left_path, hashes),
@@ -391,14 +387,14 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                     }
                     (left, right) => {
                         let left_hash = match left {
-                            PartialTrieNodeOrFelt::Felt(felt) => felt,
-                            PartialTrieNodeOrFelt::Node(node) => {
+                            NodeOrFelt::Felt(felt) => felt,
+                            NodeOrFelt::Node(node) => {
                                 self.compute_hashes::<DB>(node, left_path, hashes)?
                             }
                         };
                         let right_hash = match right {
-                            PartialTrieNodeOrFelt::Felt(felt) => felt,
-                            PartialTrieNodeOrFelt::Node(node) => {
+                            NodeOrFelt::Felt(felt) => felt,
+                            NodeOrFelt::Node(node) => {
                                 self.compute_hashes::<DB>(node, right_path, hashes)?
                             }
                         };
@@ -416,8 +412,8 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 let mut child_path = path.clone();
                 child_path.0.extend(&edge.path.0);
                 let child_hash = match self.get_node_or_felt::<DB>(&edge.child)? {
-                    PartialTrieNodeOrFelt::Felt(felt) => felt,
-                    PartialTrieNodeOrFelt::Node(node) => {
+                    NodeOrFelt::Felt(felt) => felt,
+                    NodeOrFelt::Node(node) => {
                         self.compute_hashes::<DB>(node, child_path, hashes)?
                     }
                 };
@@ -458,23 +454,23 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         println!("Node id when committing: {:?}", node_id);
         match self
             .trie
-            .proof_nodes
+            .nodes
             .remove(node_id)
             .ok_or(BonsaiStorageError::Trie(
                 "Couldn't fetch node in the temporary storage".to_string(),
             ))? {
-            PartialTrieNode::Binary(mut binary) => {
+            Node::Binary(mut binary) => {
                 let left_path = path.new_with_direction(Direction::Left);
                 let left_hash = match binary.left {
-                    ProofNodeHandle::Hash(left_hash) => left_hash,
-                    ProofNodeHandle::InMemory(node_id) => {
+                    NodeHandle::Hash(left_hash) => left_hash,
+                    NodeHandle::InMemory(node_id) => {
                         self.commit_subtree::<DB>(updates, node_id, left_path, hashes)?
                     }
                 };
                 let right_path = path.new_with_direction(Direction::Right);
                 let right_hash = match binary.right {
-                    ProofNodeHandle::Hash(right_hash) => right_hash,
-                    ProofNodeHandle::InMemory(node_id) => {
+                    NodeHandle::Hash(right_hash) => right_hash,
+                    NodeHandle::InMemory(node_id) => {
                         self.commit_subtree::<DB>(updates, node_id, right_path, hashes)?
                     }
                 };
@@ -482,21 +478,21 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 let hash = hashes.next().expect("mismatched hash state");
                 // let hash = hash_binary_node::<H>(left_hash, right_hash);
                 binary.hash = Some(hash);
-                binary.left = ProofNodeHandle::Hash(left_hash);
-                binary.right = ProofNodeHandle::Hash(right_hash);
+                binary.left = NodeHandle::Hash(left_hash);
+                binary.right = NodeHandle::Hash(right_hash);
                 let key_bytes: ByteVec = path.into();
                 updates.insert(
                     TrieKey::new(&self.trie.identifier, TrieKeyType::Trie, &key_bytes),
-                    InsertOrRemove::Insert(PartialTrieNode::Binary(binary).encode_bytevec()),
+                    InsertOrRemove::Insert(Node::Binary(binary).encode_bytevec()),
                 );
                 Ok(hash)
             }
-            PartialTrieNode::Edge(mut edge) => {
+            Node::Edge(mut edge) => {
                 let mut child_path = path.clone();
                 child_path.0.extend(&edge.path.0);
                 let child_hash = match edge.child {
-                    ProofNodeHandle::Hash(right_hash) => right_hash,
-                    ProofNodeHandle::InMemory(node_id) => {
+                    NodeHandle::Hash(right_hash) => right_hash,
+                    NodeHandle::InMemory(node_id) => {
                         self.commit_subtree::<DB>(updates, node_id, child_path, hashes)?
                     }
                 };
@@ -504,11 +500,11 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
                 let hash = hashes.next().expect("mismatched hash state");
                 edge.hash = Some(hash);
                 // let hash = hash_edge_node::<H>(&edge.path, child_hash);
-                edge.child = ProofNodeHandle::Hash(child_hash);
+                edge.child = NodeHandle::Hash(child_hash);
                 let key_bytes: ByteVec = path.into();
                 updates.insert(
                     TrieKey::new(&self.trie.identifier, TrieKeyType::Trie, &key_bytes),
-                    InsertOrRemove::Insert(PartialTrieNode::Edge(edge).encode_bytevec()),
+                    InsertOrRemove::Insert(Node::Edge(edge).encode_bytevec()),
                 );
                 Ok(hash)
             }
@@ -569,7 +565,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         match self.trie.root_node {
             Some(RootHandle::Empty) => Ok(Felt::ZERO),
             Some(RootHandle::Loaded(node_id)) => {
-                let node = self.trie.proof_nodes.get(node_id).ok_or_else(|| {
+                let node = self.trie.nodes.get(node_id).ok_or_else(|| {
                     BonsaiStorageError::Trie("Could not fetch root node from storage".into())
                 })?;
                 node.get_hash().ok_or_else(|| {
@@ -799,7 +795,6 @@ mod tests {
             println!("Inserting value: {:?}", value);
             base_tree.insert(&identifier, key, value).unwrap();
             reference_tree.insert(&identifier3, key, value).unwrap(); // thats a referencje tree
-                                                                      // println!("bonsai trie: {:?}", bonsai_storage1.tries.trees.entry(smallvec::smallvec![1]).unwrap().proof_nodes);
         }
 
         base_tree.commit(id_builder.new_id()).unwrap();
@@ -854,7 +849,7 @@ mod tests {
                 "\nPartialTree NODES before adding new key-value pair: {:?}\n",
                 partial_trie
                     .trie
-                    .proof_nodes
+                    .nodes
                     .iter()
                     .map(|(k, v)| (k, v))
                     .collect::<HashMap<_, _>>()
@@ -1055,7 +1050,7 @@ mod tests {
                 "\nPartialTree NODES after adding new key-value pair: {:?}\n",
                 partial_trie
                     .trie
-                    .proof_nodes
+                    .nodes
                     .iter()
                     .map(|(k, v)| (k, v))
                     .collect::<HashMap<_, _>>()

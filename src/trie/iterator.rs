@@ -3,7 +3,7 @@ use super::{
     path::Path,
     tree::{MerkleTree, NodeKey, RootHandle},
 };
-use crate::trie::merkle_node::PartialTrieNode;
+use crate::trie::merkle_node::{BinaryNode, EdgeNode, PartialTrieNode};
 use crate::trie::merkle_node::{EdgePartialTrieNode, ProofNodeHandle};
 use crate::{
     id::Id, key_value_db::KeyValueDB, trie::merkle_node::BinaryPartialTrieNode, BitSlice,
@@ -364,12 +364,12 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
         self.current_partial_nodes_heights
             .push((node_id, self.current_path.len()));
 
-        let partial_trie_node = self.tree.get_proof_node_mut::<DB>(node_id)?;
+        let partial_trie_node = self.tree.get_node_mut::<DB>(node_id)?;
 
         println!("\nPartial trie node: {:?}\n", partial_trie_node);
 
         let (proof_node_handle, path_matches) = match partial_trie_node {
-            PartialTrieNode::Binary(binary_node) => {
+            Node::Binary(binary_node) => {
                 log::trace!(
                     "Continue from binary node current_path={:?} key={:b}",
                     self.current_path,
@@ -377,9 +377,9 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
                 );
                 let next_direction = Direction::from(key[self.current_path.len()]);
                 self.current_path.push(bool::from(next_direction));
-                (binary_node.get_child_handle(next_direction), true)
+                (*binary_node.get_child_mut(next_direction), true)
             }
-            PartialTrieNode::Edge(edge_node) => {
+            Node::Edge(edge_node) => {
                 self.current_path.extend_from_bitslice(&edge_node.path);
                 (edge_node.child, edge_node.path_matches(key, height))
             }
@@ -397,7 +397,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
 
         println!("Proof node handle: {:?}", proof_node_handle);
 
-        let next_node_id = self.tree.load_proof_node_handle::<DB, ID>(
+        let next_node_id = self.tree.try_load_node_handle::<DB, ID>(
             self.db,
             proof_node_handle,
             &self.current_path,
@@ -407,17 +407,17 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
 
         if let Some(existing_node_id) = next_node_id {
             // Update parent ref after loading from db where we save only hashes
-            match self.tree.get_proof_node_mut::<DB>(node_id)? {
-                PartialTrieNode::Binary(binary_node) => {
-                    *binary_node.get_child_handle_mut(Direction::from(
+            match self.tree.get_node_mut::<DB>(node_id)? {
+                Node::Binary(binary_node) => {
+                    *binary_node.get_child_mut(Direction::from(
                         *self
                             .current_path
                             .last()
                             .expect("current path should have a length > 0 at this point"),
-                    )) = ProofNodeHandle::InMemory(existing_node_id);
+                    )) = NodeHandle::InMemory(existing_node_id);
                 }
-                PartialTrieNode::Edge(edge_node) => {
-                    edge_node.child = ProofNodeHandle::InMemory(existing_node_id);
+                Node::Edge(edge_node) => {
+                    edge_node.child = NodeHandle::InMemory(existing_node_id);
                 }
             };
             println!("Existing node id: {:?}", existing_node_id);
@@ -438,35 +438,33 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
             };
 
             let child = match child_node {
-                ProofNode::Binary { left, right } => {
-                    PartialTrieNode::Binary(BinaryPartialTrieNode {
-                        hash: None,
-                        height: self.current_path.len() as u64,
-                        left: ProofNodeHandle::Hash(*left),
-                        right: ProofNodeHandle::Hash(*right),
-                    })
-                }
-                ProofNode::Edge { child, path } => PartialTrieNode::Edge(EdgePartialTrieNode {
+                ProofNode::Binary { left, right } => Node::Binary(BinaryNode {
                     hash: None,
-                    child: ProofNodeHandle::Hash(*child),
+                    height: self.current_path.len() as u64,
+                    left: NodeHandle::Hash(*left),
+                    right: NodeHandle::Hash(*right),
+                }),
+                ProofNode::Edge { child, path } => Node::Edge(EdgeNode {
+                    hash: None,
+                    child: NodeHandle::Hash(*child),
                     height: self.current_path.len() as u64,
                     path: path.clone(),
                 }),
             };
 
-            let new_node_id = self.tree.proof_nodes.insert(child);
+            let new_node_id = self.tree.nodes.insert(child);
 
-            match self.tree.get_proof_node_mut::<DB>(node_id)? {
-                PartialTrieNode::Binary(binary_node) => {
-                    *binary_node.get_child_handle_mut(Direction::from(
+            match self.tree.get_node_mut::<DB>(node_id)? {
+                Node::Binary(binary_node) => {
+                    *binary_node.get_child_mut(Direction::from(
                         *self
                             .current_path
                             .last()
                             .expect("current path should have a length > 0 at this point"),
-                    )) = ProofNodeHandle::InMemory(new_node_id);
+                    )) = NodeHandle::InMemory(new_node_id);
                 }
-                PartialTrieNode::Edge(edge_node) => {
-                    edge_node.child = ProofNodeHandle::InMemory(new_node_id);
+                Node::Edge(edge_node) => {
+                    edge_node.child = NodeHandle::InMemory(new_node_id);
                 }
             };
             Ok(Some(new_node_id))
@@ -513,7 +511,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
                 // if let Some(root_node_id) = self.tree.current_root_node_id {
                 //     // visitor.visit_partial_node::<DB>(self.tree, root_node_id, 0)?;
                 //     Some(root_node_id)
-                let root_node_id = match self.tree.load_root_node_partial_trie(self.db)? {
+                let root_node_id = match self.tree.load_root_node(self.db)? {
                     Some(root_node_id) => Some(root_node_id),
                     None => {
                         // empty tree, not found
@@ -531,25 +529,21 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
 
                         // Children are set recursively in traverse_one_partial
                         let partial_root_node = match root_node {
-                            ProofNode::Binary { left, right } => {
-                                PartialTrieNode::Binary(BinaryPartialTrieNode {
-                                    hash: None,
-                                    height: self.current_path.len() as u64,
-                                    left: ProofNodeHandle::Hash(*left),
-                                    right: ProofNodeHandle::Hash(*right),
-                                })
-                            }
-                            ProofNode::Edge { child, path } => {
-                                PartialTrieNode::Edge(EdgePartialTrieNode {
-                                    hash: None,
-                                    child: ProofNodeHandle::Hash(*child),
-                                    height: self.current_path.len() as u64,
-                                    path: path.clone(),
-                                })
-                            }
+                            ProofNode::Binary { left, right } => Node::Binary(BinaryNode {
+                                hash: None,
+                                height: self.current_path.len() as u64,
+                                left: NodeHandle::Hash(*left),
+                                right: NodeHandle::Hash(*right),
+                            }),
+                            ProofNode::Edge { child, path } => Node::Edge(EdgeNode {
+                                hash: None,
+                                child: NodeHandle::Hash(*child),
+                                height: self.current_path.len() as u64,
+                                path: path.clone(),
+                            }),
                         };
 
-                        let root_node_id = self.tree.proof_nodes.insert(partial_root_node);
+                        let root_node_id = self.tree.nodes.insert(partial_root_node);
                         // self.tree.current_root_node_id = Some(root_node_id);
                         self.tree.root_node = Some(RootHandle::Loaded(root_node_id));
                         println!("Root node id: {:?}", root_node_id);

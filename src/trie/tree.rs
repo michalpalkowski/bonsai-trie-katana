@@ -64,7 +64,6 @@ pub struct MerkleTree<H: StarkHash> {
     pub(crate) current_root_node_id: Option<NodeKey>,
     /// In-memory nodes.
     pub(crate) nodes: SlotMap<NodeKey, Node>,
-    pub(crate) proof_nodes: SlotMap<NodeKey, PartialTrieNode>,
     /// Identifier of the tree in the database.
     pub(crate) identifier: ByteVec,
     /// The list of nodes that should be removed from the underlying database during the next commit.
@@ -83,7 +82,6 @@ impl<H: StarkHash> fmt::Debug for MerkleTree<H> {
             .field("root_node", &self.root_node)
             .field("current_root_node_id", &self.current_root_node_id)
             .field("nodes", &self.nodes)
-            .field("proof_nodes", &self.proof_nodes)
             .field("identifier", &self.identifier)
             .field("death_row", &self.death_row)
             .field("cache_leaf_modified", &self.cache_leaf_modified)
@@ -112,7 +110,7 @@ pub(crate) enum InsertOrRemove<T> {
     Insert(T),
     Remove,
 }
-enum NodeOrFelt<'a> {
+pub enum NodeOrFelt<'a> {
     Node(&'a Node),
     Felt(Felt),
 }
@@ -123,7 +121,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
             root_node: None,
             current_root_node_id: None,
             nodes: Default::default(),
-            proof_nodes: Default::default(),
             identifier,
             death_row: HashSet::new(),
             cache_leaf_modified: HashMap::new(),
@@ -187,62 +184,53 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         })
     }
 
-    pub(crate) fn get_proof_node_mut<DB: BonsaiDatabase>(
-        &mut self,
-        node_key: NodeKey,
-    ) -> Result<&mut PartialTrieNode, BonsaiStorageError<DB::DatabaseError>> {
-        self.proof_nodes.get_mut(node_key).ok_or_else(|| {
-            BonsaiStorageError::Trie(format!("Dangling in-memory node key: {node_key:?}"))
-        })
-    }
-
     /// First step of two phase init.
-    pub(crate) fn load_db_partial_trie_node<DB: BonsaiDatabase, ID: Id>(
-        &mut self,
-        db: &KeyValueDB<DB, ID>,
-        key: &TrieKey,
-    ) -> Result<Option<NodeKey>, BonsaiStorageError<DB::DatabaseError>> {
-        if self.death_row.contains(key) {
-            return Ok(None);
-        }
-        let node = db.get(key)?;
-        let Some(node) = node else { return Ok(None) };
+    // pub(crate) fn load_db_partial_trie_node<DB: BonsaiDatabase, ID: Id>(
+    //     &mut self,
+    //     db: &KeyValueDB<DB, ID>,
+    //     key: &TrieKey,
+    // ) -> Result<Option<NodeKey>, BonsaiStorageError<DB::DatabaseError>> {
+    //     if self.death_row.contains(key) {
+    //         return Ok(None);
+    //     }
+    //     let node = db.get(key)?;
+    //     let Some(node) = node else { return Ok(None) };
 
-        let node = PartialTrieNode::decode(&mut node.as_slice())?;
-        let key = self.proof_nodes.insert(node);
+    //     let node = PartialTrieNode::decode(&mut node.as_slice())?;
+    //     let key = self.proof_nodes.insert(node);
 
-        Ok(Some(key))
-    }
+    //     Ok(Some(key))
+    // }
 
     /// Loads the root node or returns None if the tree is empty.
-    pub(crate) fn load_root_node_partial_trie<DB: BonsaiDatabase, ID: Id>(
-        &mut self,
-        db: &KeyValueDB<DB, ID>,
-    ) -> Result<Option<NodeKey>, BonsaiStorageError<DB::DatabaseError>> {
-        // try_get_or_insert
-        match self.root_node {
-            Some(RootHandle::Loaded(id)) => Ok(Some(id)),
-            Some(RootHandle::Empty) => Ok(None),
-            None => {
-                // load the node
-                let id = self.load_db_partial_trie_node(
-                    db,
-                    &TrieKey::new(&self.identifier, TrieKeyType::Trie, &[0]),
-                )?;
+    // pub(crate) fn load_root_node_partial_trie<DB: BonsaiDatabase, ID: Id>(
+    //     &mut self,
+    //     db: &KeyValueDB<DB, ID>,
+    // ) -> Result<Option<NodeKey>, BonsaiStorageError<DB::DatabaseError>> {
+    //     // try_get_or_insert
+    //     match self.root_node {
+    //         Some(RootHandle::Loaded(id)) => Ok(Some(id)),
+    //         Some(RootHandle::Empty) => Ok(None),
+    //         None => {
+    //             // load the node
+    //             let id = self.load_db_partial_trie_node(
+    //                 db,
+    //                 &TrieKey::new(&self.identifier, TrieKeyType::Trie, &[0]),
+    //             )?;
 
-                match id {
-                    Some(id) => {
-                        self.root_node = Some(RootHandle::Loaded(id));
-                        Ok(Some(id))
-                    }
-                    None => {
-                        self.root_node = Some(RootHandle::Empty);
-                        Ok(None)
-                    }
-                }
-            }
-        }
-    }
+    //             match id {
+    //                 Some(id) => {
+    //                     self.root_node = Some(RootHandle::Loaded(id));
+    //                     Ok(Some(id))
+    //                 }
+    //                 None => {
+    //                     self.root_node = Some(RootHandle::Empty);
+    //                     Ok(None)
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
 
     pub(crate) fn load_node_handle<DB: BonsaiDatabase, ID: Id>(
         &mut self,
@@ -269,33 +257,56 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         }
     }
 
-    pub(crate) fn load_proof_node_handle<DB: BonsaiDatabase, ID: Id>(
+    pub(crate) fn try_load_node_handle<DB: BonsaiDatabase, ID: Id>(
         &mut self,
         db: &KeyValueDB<DB, ID>,
-        handle: ProofNodeHandle,
+        handle: NodeHandle,
         path: &Path,
     ) -> Result<Option<NodeKey>, BonsaiStorageError<DB::DatabaseError>> {
         match handle {
-            ProofNodeHandle::Hash(hash) => {
+            NodeHandle::Hash(hash) => {
                 // TODO(perf): useless allocs everywhere here...
+
                 let path: ByteVec = path.clone().into();
                 log::trace!("Visiting db node {:?}", path);
                 let key = TrieKey::new(&self.identifier, TrieKeyType::Trie, &path);
-                println!("Key to look for : {:?}", key);
-                let Some(node_key) = self.load_db_partial_trie_node(db, &key)? else {
+                let Some(node_key) = self.load_db_node(db, &key)? else {
                     // Dangling node id in db
-                    // return Err(BonsaiStorageError::Trie(
-                    //     "Could not get node from db".to_string(),
-                    // ));
-                    println!("Dangling node id in db");
                     return Ok(None);
                 };
-                println!("Node key: {:?}", node_key);
                 Ok(Some(node_key))
             }
-            ProofNodeHandle::InMemory(node_key) => Ok(Some(node_key)),
+            NodeHandle::InMemory(node_key) => Ok(Some(node_key)),
         }
     }
+
+    // pub(crate) fn load_proof_node_handle<DB: BonsaiDatabase, ID: Id>(
+    //     &mut self,
+    //     db: &KeyValueDB<DB, ID>,
+    //     handle: ProofNodeHandle,
+    //     path: &Path,
+    // ) -> Result<Option<NodeKey>, BonsaiStorageError<DB::DatabaseError>> {
+    //     match handle {
+    //         ProofNodeHandle::Hash(hash) => {
+    //             // TODO(perf): useless allocs everywhere here...
+    //             let path: ByteVec = path.clone().into();
+    //             log::trace!("Visiting db node {:?}", path);
+    //             let key = TrieKey::new(&self.identifier, TrieKeyType::Trie, &path);
+    //             println!("Key to look for : {:?}", key);
+    //             let Some(node_key) = self.load_db_partial_trie_node(db, &key)? else {
+    //                 // Dangling node id in db
+    //                 // return Err(BonsaiStorageError::Trie(
+    //                 //     "Could not get node from db".to_string(),
+    //                 // ));
+    //                 println!("Dangling node id in db");
+    //                 return Ok(None);
+    //             };
+    //             println!("Node key: {:?}", node_key);
+    //             Ok(Some(node_key))
+    //         }
+    //         ProofNodeHandle::InMemory(node_key) => Ok(Some(node_key)),
+    //     }
+    // }
 
     /// Get or compute the hash of a node.
     pub(crate) fn get_or_compute_node_hash<DB: BonsaiDatabase>(
