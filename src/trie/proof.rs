@@ -54,7 +54,7 @@ pub enum ProofVerificationError {
     InvalidProof,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ProofNode {
     Binary { left: Felt, right: Felt },
     Edge { child: Felt, path: Path },
@@ -65,27 +65,6 @@ impl ProofNode {
         match self {
             ProofNode::Binary { left, right } => hash_binary_node::<H>(*left, *right),
             ProofNode::Edge { child, path } => hash_edge_node::<H>(path, *child),
-        }
-    }
-    pub fn path_matches(&self, key: &BitSlice, node_height: usize) -> bool {
-        match self {
-            ProofNode::Binary { .. } => {
-                // For binary nodes, always return true, because there is no path to compare
-                true
-            }
-            ProofNode::Edge { path, .. } => {
-                // assert_eq!(self.height as usize, node_height);
-                let lower_bound = node_height.min(key.len());
-                let upper_bound = (node_height + path.0.len()).min(key.len());
-                log::trace!(
-                    "path_matches {:b}{lower_bound}..{upper_bound} ({}) - {:b}0..{}",
-                    &key[lower_bound..upper_bound],
-                    upper_bound - lower_bound,
-                    path.0,
-                    path.len()
-                );
-                path.starts_with(&key[lower_bound..upper_bound])
-            }
         }
     }
 }
@@ -245,47 +224,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         Ok(visitor.0)
     }
 }
-/// Hashes up the Merkle path from a leaf to the root.
-///
-/// # Arguments
-///
-/// * `key` - The key being updated
-/// * `current_hash` - The current hash at the leaf
-/// * `path_nodes` - The nodes along the path
-/// * `skip_last` - Whether to skip the last node in the path
-///
-/// # Returns
-///
-/// The new root hash.
-pub fn hash_up_merkle_path<H: StarkHash>(
-    key: &BitSlice,
-    mut current_hash: Felt,
-    path_nodes: &[(BitVec, ProofNode)],
-    skip_last: bool, // whether to skip the last element (e.g. if you've already processed it)
-) -> Felt {
-    let iter = if skip_last {
-        path_nodes.iter().rev().skip(1)
-    } else {
-        path_nodes.iter().rev().skip(0)
-    };
-    for (path, node) in iter {
-        match node {
-            ProofNode::Binary { left, right } => {
-                let direction = Direction::from(key[path.len()]);
-                current_hash = match direction {
-                    Direction::Left => hash_binary_node::<H>(current_hash, *right),
-                    Direction::Right => hash_binary_node::<H>(*left, current_hash),
-                };
-            }
-            ProofNode::Edge {
-                path: edge_path, ..
-            } => {
-                current_hash = hash_edge_node::<H>(edge_path, current_hash);
-            }
-        }
-    }
-    current_hash
-}
 
 #[cfg(test)]
 mod tests {
@@ -355,44 +293,4 @@ mod tests {
             key_values.iter().map(|(_k, v)| *v).collect::<Vec<_>>()
         );
     }
-}
-
-#[should_panic(expected = "The tree has uncommited changes")]
-#[test]
-fn test_if_uncommited_changes_fails() {
-    use crate::{
-        databases::{create_rocks_db, RocksDB, RocksDBConfig},
-        id::{BasicId, BasicIdBuilder},
-        BonsaiStorage, BonsaiStorageConfig,
-    };
-    use starknet_types_core::{felt::Felt, hash::Pedersen};
-
-    let db = create_rocks_db(tempfile::tempdir().unwrap().path()).unwrap();
-    let identifier1 = vec![1];
-
-    let config = BonsaiStorageConfig::default();
-    let mut bonsai_storage: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
-        BonsaiStorage::new(
-            RocksDB::new(&db, RocksDBConfig::default()),
-            config.clone(),
-            24,
-        );
-
-    let mut id_builder = BasicIdBuilder::new();
-
-    for i in 0..5 {
-        let mut key = vec![0; 3];
-        key[0] = i;
-        let value = Felt::from(i as u64 + 100);
-        bonsai_storage
-            .insert(&identifier1, &BitVec::from_vec(key), &value)
-            .unwrap();
-    }
-
-    // Test root hash before commit
-    let root_result1 = bonsai_storage.root_hash(&identifier1).unwrap();
-
-    // Commit changes and test root hash after commit
-    bonsai_storage.commit(id_builder.new_id()).unwrap();
-    let root_result2 = bonsai_storage.root_hash(&identifier1).unwrap();
 }

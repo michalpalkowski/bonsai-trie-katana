@@ -28,7 +28,7 @@ impl<DBE: DBError> From<IteratorError> for BonsaiStorageError<DBE> {
     }
 }
 
-/// Trait for handling node visits during seek operations
+/// This trait's function will be called on every node visited during a seek operation.
 pub trait NodeVisitor<H: StarkHash> {
     fn visit_node<DB: BonsaiDatabase>(
         &mut self,
@@ -296,11 +296,11 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeTrave
                 .partition_point(|(_node, height)| *height < shared_prefix_len)
         };
         log::trace!(
-                "Truncate pre node id cache shared_prefix_len={:?}, nodes_new_len={:?}, cur_path_nodes_heights={:?}, current_path={:?}",
-                shared_prefix_len, nodes_new_len,
-                self.current_nodes_heights,
-                self.current_path,
-            );
+            "Truncate pre node id cache shared_prefix_len={:?}, nodes_new_len={:?}, cur_path_nodes_heights={:?}, current_path={:?}",
+            shared_prefix_len, nodes_new_len,
+            self.current_nodes_heights,
+            self.current_path,
+        );
 
         self.current_nodes_heights.truncate(nodes_new_len);
         self.current_path.truncate(key.len());
@@ -364,8 +364,6 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
             .push((node_id, self.current_path.len()));
 
         let partial_trie_node = self.tree.get_node_mut::<DB>(node_id)?;
-
-        println!("\nPartial trie node: {:?}\n", partial_trie_node);
 
         let (proof_node_handle, path_matches) = match partial_trie_node {
             Node::Binary(binary_node) => {

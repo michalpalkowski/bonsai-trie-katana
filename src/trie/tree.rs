@@ -184,7 +184,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         path: &Path,
     ) -> Result<NodeKey, BonsaiStorageError<DB::DatabaseError>> {
         match handle {
-            NodeHandle::Hash(hash) => {
+            NodeHandle::Hash(_) => {
                 // TODO(perf): useless allocs everywhere here...
 
                 let path: ByteVec = path.clone().into();
@@ -209,7 +209,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         path: &Path,
     ) -> Result<Option<NodeKey>, BonsaiStorageError<DB::DatabaseError>> {
         match handle {
-            NodeHandle::Hash(hash) => {
+            NodeHandle::Hash(_) => {
                 // TODO(perf): useless allocs everywhere here...
 
                 let path: ByteVec = path.clone().into();
@@ -337,7 +337,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
             // compute hashes
             let mut hashes = vec![];
             self.compute_root_hash::<DB>(&mut hashes)?;
-            println!("Reference hashes: {:?}\n", hashes);
             // commit the tree
             self.commit_subtree::<DB>(
                 &mut updates,
@@ -606,9 +605,9 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         if value == Felt::ZERO {
             return self.delete_leaf(db, key);
         }
-        if key.len() != self.max_height as usize {
+        if key.len() != self.max_height as _ {
             return Err(BonsaiStorageError::KeyLength {
-                expected: self.max_height as usize,
+                expected: self.max_height as _,
                 got: key.len(),
             });
         }
@@ -711,7 +710,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                         };
 
                         // The existing child branch of the binary node.
-                        let old: NodeHandle = if old_path.is_empty() {
+                        let old = if old_path.is_empty() {
                             edge.child
                         } else {
                             let edge_id = self.nodes.insert(Node::Edge(EdgeNode {
@@ -807,9 +806,9 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         db: &KeyValueDB<DB, ID>,
         key: &BitSlice,
     ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
-        if key.len() != self.max_height as usize {
+        if key.len() != self.max_height as _ {
             return Err(BonsaiStorageError::KeyLength {
-                expected: self.max_height as usize,
+                expected: self.max_height as _,
                 got: key.len(),
             });
         }

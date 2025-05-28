@@ -4,7 +4,7 @@
 //! For more information about how these Starknet trees are structured, see
 //! [`MerkleTree`](super::merkle_tree::MerkleTree).
 
-use crate::{BitSlice, ProofNode};
+use crate::BitSlice;
 use bitvec::view::BitView;
 use core::fmt;
 use parity_scale_codec::{Decode, Encode};
