@@ -316,6 +316,8 @@ mod tests {
 
             println!("---------PROOF-------");
             println!("{:?}\n", proof);
+            let proof_root = proof.0.first().unwrap().0;
+            let proof_root_clone = proof.clone();
 
             // println!("\ntree: {:?}\n", bonsai_storage1.tries.trees.entry(smallvec::smallvec![1]));
             reference_tree.insert(&identifier3, key, value).unwrap();
@@ -343,7 +345,7 @@ mod tests {
             reference_tree.commit(id_builder.new_id()).unwrap();
 
             fork_tree
-                .insert_with_proof(&identifier4, key, value, proof, original_root)
+                .insert_with_proof(&identifier4, key, value, proof_root_clone, *proof_root)
                 .unwrap();
             fork_tree.commit(id_builder.new_id()).unwrap();
             let fork_hash = fork_tree.root_hash(&identifier4).unwrap();
@@ -521,11 +523,14 @@ mod tests {
                 .get_multi_proof(&base_bonsai_storage.tries.db, proof_keys.iter())
                 .unwrap();
 
+            let proof_root = proof.0.first().unwrap().0;
+            let proof_clone = proof.clone();
+
             println!("\nITERATION: {:?}\n", i);
             println!("\nProof: {:?}\n", proof);
 
             forked_bonsai_storage
-                .insert_with_proof(&fork_identifier, key, value, proof, original_root)
+                .insert_with_proof(&fork_identifier, key, value, proof_clone, *proof_root)
                 .unwrap();
             forked_bonsai_storage.commit(id_builder.new_id()).unwrap();
             let fork_hash = forked_bonsai_storage.root_hash(&fork_identifier).unwrap();

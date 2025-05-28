@@ -12,10 +12,11 @@ use crate::{
         merkle_node::{Node, NodeHandle},
         tree::NodeKey,
     },
-    BitSlice, BitVec, BonsaiDatabase, BonsaiStorageError, HashMap, HashSet,
+    BitSlice, BitVec, BonsaiDatabase, BonsaiStorageError, HashSet,
 };
 use core::{marker::PhantomData, mem};
 use hashbrown::hash_set;
+use indexmap::IndexMap;
 use starknet_types_core::{felt::Felt, hash::StarkHash};
 
 #[derive(Debug, thiserror::Error)]
@@ -60,7 +61,7 @@ impl ProofNode {
     }
 }
 #[derive(Debug, Clone)]
-pub struct MultiProof(pub HashMap<Felt, ProofNode>);
+pub struct MultiProof(pub IndexMap<Felt, ProofNode>);
 impl MultiProof {
     /// If the proof proves more than just the provided `key_values`, this function will not fail.
     /// Not the most optimized way of doing it, but we don't actually need to verify proofs in madara.

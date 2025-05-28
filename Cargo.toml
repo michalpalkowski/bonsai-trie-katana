@@ -47,6 +47,8 @@ rocksdb = { optional = true, version = "0.22", features = [
   "multi-threaded-cf",
 ] }
 
+indexmap = "2.2.6"
+
 [dev-dependencies]
 env_logger = "0.11.3"
 once_cell = "1.19.0"
