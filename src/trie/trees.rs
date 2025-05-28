@@ -6,7 +6,7 @@ use crate::{
 use core::fmt;
 use starknet_types_core::{felt::Felt, hash::StarkHash};
 
-pub(crate) struct MerkleTrees<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id> {
+pub struct MerkleTrees<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id> {
     pub db: KeyValueDB<DB, CommitID>,
     pub trees: HashMap<ByteVec, MerkleTree<H>>,
     pub max_height: u8,

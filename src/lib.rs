@@ -204,7 +204,7 @@ pub struct Change {
 /// Structure that hold the trie and all the necessary information to work with it.
 ///
 /// This structure is the main entry point to work with this crate.
-pub(crate) struct BonsaiStorage<
+pub struct BonsaiStorage<
     ChangeID: Id,
     DB: BonsaiDatabase,
     H: StarkHash + Send + Sync,
