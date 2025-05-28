@@ -1,12 +1,3 @@
-//! Merkle proof verification and generation for the Bonsai Trie.
-//!
-//! This module provides functionality for generating and verifying Merkle proofs
-//! for the Bonsai Trie data structure. It includes:
-//! - Multi-proof generation and verification
-//! - Proof node types (Binary and Edge)
-//! - Error handling for proof verification
-//! - Utilities for calculating new root hashes
-
 use super::iterator::MerkleTreeTraverser;
 use super::{
     merkle_node::{hash_binary_node, hash_edge_node, Direction},
