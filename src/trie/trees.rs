@@ -270,70 +270,8 @@ impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id>
         }
     }
 
-    pub(crate) fn set(
-        &mut self,
-        identifier: &[u8],
-        key: &BitSlice,
-        value: Felt,
-    ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
-        let tree = self
-            .trees
-            .entry_ref(identifier)
-            .or_insert_with(|| PartialTrie::new(identifier.into(), self.max_height));
-
-        tree.trie.set(&self.db, key, value, None)
-    }
-
-    pub(crate) fn get(
-        &self,
-        identifier: &[u8],
-        key: &BitSlice,
-    ) -> Result<Option<Felt>, BonsaiStorageError<DB::DatabaseError>> {
-        if let Some(tree) = self.trees.get(identifier) {
-            tree.trie.get(&self.db, key)
-        } else {
-            MerkleTree::<H>::new(identifier.into(), self.max_height).get(&self.db, key)
-        }
-    }
-
-    pub(crate) fn get_at(
-        &self,
-        identifier: &[u8],
-        key: &BitSlice,
-        id: CommitID,
-    ) -> Result<Option<Felt>, BonsaiStorageError<DB::DatabaseError>> {
-        if let Some(tree) = self.trees.get(identifier) {
-            tree.trie.get_at(&self.db, key, id)
-        } else {
-            MerkleTree::<H>::new(identifier.into(), self.max_height).get_at(&self.db, key, id)
-        }
-    }
-
-    pub(crate) fn contains(
-        &self,
-        identifier: &[u8],
-        key: &BitSlice,
-    ) -> Result<bool, BonsaiStorageError<DB::DatabaseError>> {
-        if let Some(tree) = self.trees.get(identifier) {
-            tree.trie.contains(&self.db, key)
-        } else {
-            MerkleTree::<H>::new(identifier.into(), self.max_height).contains(&self.db, key)
-        }
-    }
-
     pub(crate) fn db_mut(&mut self) -> &mut KeyValueDB<DB, CommitID> {
         &mut self.db
-    }
-
-    pub(crate) fn reset_to_last_commit(
-        &mut self,
-    ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
-        self.trees.clear(); // just clear the map
-        Ok(())
-    }
-
-    pub(crate) fn db_ref(&self) -> &KeyValueDB<DB, CommitID> {
-        &self.db
     }
 
     pub(crate) fn root_hash(
@@ -360,7 +298,7 @@ impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id>
         let db_changes = self
             .trees
             .par_iter_mut()
-            .map(|(_, tree)| tree.get_updates::<DB>())
+            .map(|(_, tree)| tree.trie.get_updates::<DB>())
             .collect_vec_list()
             .into_iter()
             .flatten();

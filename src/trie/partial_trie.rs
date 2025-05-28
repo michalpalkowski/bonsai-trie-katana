@@ -1,30 +1,18 @@
 use super::iterator::PartialMerkleTreeTraverser;
-use super::tree::NodeOrFelt;
-use super::trie_db::TrieKeyType;
 use super::{
     iterator::NoopPartialVisitor,
-    merkle_node::{hash_binary_node, hash_edge_node, BinaryNode, Direction, EdgeNode, Node},
-    path::Path,
-    tree::{MerkleTree, NodeKey, RootHandle},
+    tree::{MerkleTree, NodeKey},
 };
 use crate::fmt;
-use crate::id::BasicId;
 use crate::trie::proof::ProofVerificationError;
-use crate::trie::tree::bitslice_to_bytes;
-use crate::trie::tree::InsertOrRemove;
-use crate::trie::TrieKey;
+use crate::BitVec;
 use crate::DBError;
-use crate::ProofNode;
-use crate::{databases::RocksDB, MultiProof};
+use crate::MultiProof;
 use crate::{
-    error::BonsaiStorageError, format, hash_map, id::Id, vec, BitSlice, BonsaiDatabase, ByteVec,
-    EncodeExt, HashMap, HashSet, KeyValueDB, ToString, Vec,
+    error::BonsaiStorageError, id::Id, vec, BitSlice, BonsaiDatabase, ByteVec, HashMap, KeyValueDB,
+    ToString, Vec,
 };
-use crate::{trie::merkle_node::NodeHandle, BitVec};
 use core::marker::PhantomData;
-use core::mem;
-use parity_scale_codec::Decode;
-use rocksdb::DB;
 use starknet_types_core::{felt::Felt, hash::StarkHash};
 
 #[derive(Debug, thiserror::Error)]
@@ -47,7 +35,6 @@ impl<DBE: DBError> From<PartialTrieError> for BonsaiStorageError<DBE> {
     }
 }
 
-// #[derive(Debug)]
 pub struct PartialTrie<H: StarkHash> {
     pub trie: MerkleTree<H>,
     pub _hasher: PhantomData<H>,
@@ -57,7 +44,6 @@ impl<H: StarkHash> fmt::Debug for PartialTrie<H> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PartialTrie")
             .field("trie", &self.trie)
-            .field("current_root_node_id", &self.trie.current_root_node_id)
             .field("nodes", &self.trie.nodes)
             .field("identifier", &self.trie.identifier)
             .field("death_row", &self.trie.death_row)
@@ -123,31 +109,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         Ok(path_nodes)
     }
 
-    fn get_node_or_felt<DB: BonsaiDatabase>(
-        &self,
-        node_handle: &NodeHandle,
-    ) -> Result<NodeOrFelt, BonsaiStorageError<DB::DatabaseError>> {
-        self.trie.get_node_or_felt::<DB>(node_handle)
-    }
-
-    fn compute_root_hash<DB: BonsaiDatabase>(
-        &self,
-        hashes: &mut Vec<Felt>,
-    ) -> Result<Felt, BonsaiStorageError<DB::DatabaseError>> {
-        self.trie.compute_root_hash::<DB>(hashes)
-    }
-
-    /// Calculate all the new hashes and the root hash.
-    #[allow(clippy::type_complexity)]
-    pub(crate) fn get_updates<DB: BonsaiDatabase>(
-        &mut self,
-    ) -> Result<
-        impl Iterator<Item = (TrieKey, InsertOrRemove<ByteVec>)>,
-        BonsaiStorageError<DB::DatabaseError>,
-    > {
-        self.trie.get_updates::<DB>()
-    }
-
     /// # Panics
     ///
     /// Calling this function when the tree has uncommited changes is invalid as the hashes need to be recomputed.
@@ -156,16 +117,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         db: &KeyValueDB<DB, ID>,
     ) -> Result<Felt, BonsaiStorageError<DB::DatabaseError>> {
         self.trie.root_hash::<DB, ID>(db)
-    }
-
-    /// Get the node of the trie that corresponds to the path.
-    fn get_trie_branch_in_db_from_path<DB: BonsaiDatabase, ID: Id>(
-        death_row: &HashSet<TrieKey>,
-        identifier: &[u8],
-        db: &KeyValueDB<DB, ID>,
-        path: &Path,
-    ) -> Result<Option<Node>, BonsaiStorageError<DB::DatabaseError>> {
-        MerkleTree::<H>::get_trie_branch_in_db_from_path(death_row, identifier, db, path)
     }
 
     // Commit a single merkle tree

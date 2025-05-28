@@ -58,7 +58,6 @@ pub(crate) enum RootHandle {
 pub struct MerkleTree<H: StarkHash> {
     /// The root node. None means the node has not been loaded yet.
     pub(crate) root_node: Option<RootHandle>,
-    pub(crate) current_root_node_id: Option<NodeKey>,
     /// In-memory nodes.
     pub(crate) nodes: SlotMap<NodeKey, Node>,
     /// Identifier of the tree in the database.
@@ -77,7 +76,6 @@ impl<H: StarkHash> fmt::Debug for MerkleTree<H> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MerkleTree")
             .field("root_node", &self.root_node)
-            .field("current_root_node_id", &self.current_root_node_id)
             .field("nodes", &self.nodes)
             .field("identifier", &self.identifier)
             .field("death_row", &self.death_row)
@@ -116,7 +114,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
     pub fn new(identifier: ByteVec, max_height: u8) -> Self {
         Self {
             root_node: None,
-            current_root_node_id: None,
             nodes: Default::default(),
             identifier,
             death_row: HashSet::new(),

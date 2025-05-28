@@ -10,7 +10,6 @@ use crate::{
 };
 use core::{fmt, marker::PhantomData};
 use starknet_types_core::{felt::Felt, hash::StarkHash};
-use std::collections::HashMap;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -51,6 +50,7 @@ impl<H: StarkHash> NodeVisitor<H> for NoopVisitor<H> {
     }
 }
 
+//TODO: consider removing/implementing this trait
 /// Trait for handling partial node visits during seek operations
 pub trait PartialNodeVisitor<H: StarkHash> {
     fn visit_partial_node<DB: BonsaiDatabase>(
@@ -505,11 +505,6 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
                 // visitor.visit_partial_node::<DB>(self.tree, node_id, height)?;
                 self.traverse_one(node_id, height, key)?
             } else {
-                // If we have already consstructed partial trie then we have node key for current root
-                //But its only one try because it should be updated
-                // if let Some(root_node_id) = self.tree.current_root_node_id {
-                //     // visitor.visit_partial_node::<DB>(self.tree, root_node_id, 0)?;
-                //     Some(root_node_id)
                 let root_node_id = match self.tree.load_root_node(self.db)? {
                     Some(root_node_id) => Some(root_node_id),
                     None => {
@@ -543,7 +538,6 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
                         };
 
                         let root_node_id = self.tree.nodes.insert(partial_root_node);
-                        // self.tree.current_root_node_id = Some(root_node_id);
                         self.tree.root_node = Some(RootHandle::Loaded(root_node_id));
                         println!("Root node id: {:?}", root_node_id);
                         Some(root_node_id)
