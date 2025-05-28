@@ -598,14 +598,14 @@ impl<ChangeID: Id, DB: BonsaiDatabase, H: StarkHash + Send + Sync>
         value: &Felt,
         proof: MultiProof,
         original_root: Felt,
-    ) -> Result<Felt, BonsaiStorageError<DB::DatabaseError>> {
+    ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
         if let Some(tree) = self.tries.trees.get_mut(identifier) {
-            tree.set(&mut self.tries.db, key, *value, proof, original_root)
+            tree.set_with_proof(&mut self.tries.db, key, *value, proof, original_root)
         } else {
             let mut tree = PartialTrie::new(identifier.into(), self.tries.max_height);
-            let root: Felt = tree.set(&mut self.tries.db, key, *value, proof, original_root)?;
+            tree.set_with_proof(&mut self.tries.db, key, *value, proof, original_root)?;
             self.tries.trees.insert(identifier.into(), tree);
-            Ok(root)
+            Ok(())
         }
     }
 

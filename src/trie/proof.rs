@@ -13,7 +13,6 @@ use super::{
     path::Path,
     tree::MerkleTree,
 };
-use crate::trie::merkle_node::PartialTrieNode;
 use crate::{
     id::Id,
     key_value_db::KeyValueDB,
@@ -90,9 +89,6 @@ impl ProofNode {
         }
     }
 }
-
-#[derive(Debug, Clone)]
-pub struct PartialPath(pub HashMap<NodeKey, PartialTrieNode>);
 #[derive(Debug, Clone)]
 pub struct MultiProof(pub HashMap<Felt, ProofNode>);
 impl MultiProof {

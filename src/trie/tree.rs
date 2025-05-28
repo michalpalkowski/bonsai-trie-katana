@@ -20,9 +20,6 @@ use super::{
     TrieKey,
 };
 use crate::trie::iterator::PartialMerkleTreeIterator;
-use crate::trie::merkle_node::{
-    BinaryPartialTrieNode, EdgePartialTrieNode, PartialTrieNode, ProofNodeHandle,
-};
 
 #[cfg(test)]
 use log::trace;
@@ -183,55 +180,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
             BonsaiStorageError::Trie(format!("Dangling in-memory node key: {node_key:?}"))
         })
     }
-
-    /// First step of two phase init.
-    // pub(crate) fn load_db_partial_trie_node<DB: BonsaiDatabase, ID: Id>(
-    //     &mut self,
-    //     db: &KeyValueDB<DB, ID>,
-    //     key: &TrieKey,
-    // ) -> Result<Option<NodeKey>, BonsaiStorageError<DB::DatabaseError>> {
-    //     if self.death_row.contains(key) {
-    //         return Ok(None);
-    //     }
-    //     let node = db.get(key)?;
-    //     let Some(node) = node else { return Ok(None) };
-
-    //     let node = PartialTrieNode::decode(&mut node.as_slice())?;
-    //     let key = self.proof_nodes.insert(node);
-
-    //     Ok(Some(key))
-    // }
-
-    /// Loads the root node or returns None if the tree is empty.
-    // pub(crate) fn load_root_node_partial_trie<DB: BonsaiDatabase, ID: Id>(
-    //     &mut self,
-    //     db: &KeyValueDB<DB, ID>,
-    // ) -> Result<Option<NodeKey>, BonsaiStorageError<DB::DatabaseError>> {
-    //     // try_get_or_insert
-    //     match self.root_node {
-    //         Some(RootHandle::Loaded(id)) => Ok(Some(id)),
-    //         Some(RootHandle::Empty) => Ok(None),
-    //         None => {
-    //             // load the node
-    //             let id = self.load_db_partial_trie_node(
-    //                 db,
-    //                 &TrieKey::new(&self.identifier, TrieKeyType::Trie, &[0]),
-    //             )?;
-
-    //             match id {
-    //                 Some(id) => {
-    //                     self.root_node = Some(RootHandle::Loaded(id));
-    //                     Ok(Some(id))
-    //                 }
-    //                 None => {
-    //                     self.root_node = Some(RootHandle::Empty);
-    //                     Ok(None)
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
-
     pub(crate) fn load_node_handle<DB: BonsaiDatabase, ID: Id>(
         &mut self,
         db: &KeyValueDB<DB, ID>,
@@ -279,34 +227,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
             NodeHandle::InMemory(node_key) => Ok(Some(node_key)),
         }
     }
-
-    // pub(crate) fn load_proof_node_handle<DB: BonsaiDatabase, ID: Id>(
-    //     &mut self,
-    //     db: &KeyValueDB<DB, ID>,
-    //     handle: ProofNodeHandle,
-    //     path: &Path,
-    // ) -> Result<Option<NodeKey>, BonsaiStorageError<DB::DatabaseError>> {
-    //     match handle {
-    //         ProofNodeHandle::Hash(hash) => {
-    //             // TODO(perf): useless allocs everywhere here...
-    //             let path: ByteVec = path.clone().into();
-    //             log::trace!("Visiting db node {:?}", path);
-    //             let key = TrieKey::new(&self.identifier, TrieKeyType::Trie, &path);
-    //             println!("Key to look for : {:?}", key);
-    //             let Some(node_key) = self.load_db_partial_trie_node(db, &key)? else {
-    //                 // Dangling node id in db
-    //                 // return Err(BonsaiStorageError::Trie(
-    //                 //     "Could not get node from db".to_string(),
-    //                 // ));
-    //                 println!("Dangling node id in db");
-    //                 return Ok(None);
-    //             };
-    //             println!("Node key: {:?}", node_key);
-    //             Ok(Some(node_key))
-    //         }
-    //         ProofNodeHandle::InMemory(node_key) => Ok(Some(node_key)),
-    //     }
-    // }
 
     /// Get or compute the hash of a node.
     pub(crate) fn get_or_compute_node_hash<DB: BonsaiDatabase>(
@@ -678,11 +598,13 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
     ///
     /// * `key` - The key to set.
     /// * `value` - The value to set.
+    /// * `path_nodes` - Optional path nodes from proof traversal. If None, will use direct iteration.
     pub fn set<DB: BonsaiDatabase, ID: Id>(
         &mut self,
         db: &KeyValueDB<DB, ID>,
         key: &BitSlice,
         value: Felt,
+        path_nodes: Option<Vec<(NodeKey, usize)>>,
     ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
         if value == Felt::ZERO {
             return self.delete_leaf(db, key);
@@ -716,10 +638,14 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
             }
         }
 
-        let mut iter = self.iter(db);
-        iter.seek_to(key)?;
-        log::trace!("Iter is {:?}", iter);
-        let path_nodes = iter.current_nodes_heights;
+        let path_nodes = if let Some(nodes) = path_nodes {
+            nodes
+        } else {
+            let mut iter = self.iter(db);
+            iter.seek_to(key)?;
+            log::trace!("Iter is {:?}", iter);
+            iter.current_nodes_heights
+        };
 
         // There are three possibilities.
         //

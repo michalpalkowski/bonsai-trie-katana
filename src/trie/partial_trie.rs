@@ -5,13 +5,10 @@ use super::{
     iterator::NoopPartialVisitor,
     merkle_node::{hash_binary_node, hash_edge_node, BinaryNode, Direction, EdgeNode, Node},
     path::Path,
-    proof::PartialPath,
     tree::{MerkleTree, NodeKey, RootHandle},
 };
 use crate::fmt;
 use crate::id::BasicId;
-use crate::trie::merkle_node::PartialTrieNode;
-use crate::trie::merkle_node::{BinaryPartialTrieNode, EdgePartialTrieNode, ProofNodeHandle};
 use crate::trie::proof::ProofVerificationError;
 use crate::trie::tree::bitslice_to_bytes;
 use crate::trie::tree::InsertOrRemove;
@@ -56,12 +53,6 @@ pub struct PartialTrie<H: StarkHash> {
     pub _hasher: PhantomData<H>,
 }
 
-#[derive(Debug)]
-enum PartialTrieNodeOrFelt<'a> {
-    Node(&'a PartialTrieNode),
-    Felt(Felt),
-}
-
 impl<H: StarkHash> fmt::Debug for PartialTrie<H> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PartialTrie")
@@ -86,34 +77,29 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
     /// Sets a value in the partial-trie and returns the updated root.
     /// Uses proof to fetch missing nodes.
     /// On first call, traverses the entire proof to build the tree from scratch.
-    pub fn set<DB: BonsaiDatabase, ID: Id>(
+    pub fn set_with_proof<DB: BonsaiDatabase, ID: Id>(
         &mut self,
         db: &mut KeyValueDB<DB, ID>,
         key: &BitSlice,
         value: Felt,
         proof: MultiProof,
         original_root: Felt,
-    ) -> Result<Felt, BonsaiStorageError<DB::DatabaseError>> {
+    ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
         if value == Felt::ZERO {
             return Err(PartialTrieError::SetValueZero.into());
         }
-        log::trace!("SET KEY: {:?}", key);
-        log::trace!("SET VALUE: {:?}", value);
-        log::trace!("SET ORIGINAL ROOT: {:?}", original_root);
 
-        let path_nodes = self.get_path_for_partial_trie(&key, proof, original_root, db)?;
+        let path_nodes = self.seek_to(&key, proof, original_root, db)?;
 
-        log::trace!("Path nodes: {:?}", path_nodes);
+        self.trie.set(db, key, value, Some(path_nodes))?;
 
-        let calculated_root = self.build_from_visited_nodes(path_nodes.clone(), &key, value, db)?;
-
-        Ok(calculated_root)
+        Ok(())
     }
 
     /// Traverses the current partial tree and collects existing elements.
     /// If an element is missing, selects it from the proof.
     /// If the tree is empty, completes it from the proof.
-    pub fn get_path_for_partial_trie<DB: BonsaiDatabase, ID: Id>(
+    pub fn seek_to<DB: BonsaiDatabase, ID: Id>(
         &mut self,
         key: &BitSlice,
         proof: MultiProof,
@@ -135,177 +121,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         let path_nodes = iter.current_partial_nodes_heights;
 
         Ok(path_nodes)
-    }
-
-    /// Builds tree from visited nodes and recursively updates hashes up the path
-    fn build_from_visited_nodes<DB: BonsaiDatabase, ID: Id>(
-        &mut self,
-        path_nodes: Vec<(NodeKey, usize)>,
-        key: &BitSlice,
-        value: Felt,
-        db: &mut KeyValueDB<DB, ID>,
-    ) -> Result<Felt, BonsaiStorageError<DB::DatabaseError>> {
-        let key_bytes = bitslice_to_bytes(key);
-        match path_nodes.last() {
-            Some((node_key, height)) => {
-                let node =
-                    self.build_node_recursive(node_key, *height, key, value, &path_nodes, db)?;
-                self.trie.nodes[*node_key] = node;
-                Ok(Felt::ZERO)
-            }
-            None => {
-                log::trace!(
-                    "Empty tree - this should never happen as we get proof from the full trie"
-                );
-
-                // Handle empty tree case
-                let edge_node_hash = hash_edge_node::<H>(&Path(key.to_bitvec()), value);
-                let edge_node = Node::Edge(EdgeNode {
-                    hash: Some(edge_node_hash),
-                    path: Path(key.to_bitvec()),
-                    height: 0,
-                    child: NodeHandle::Hash(value),
-                });
-                let node_id = self.trie.nodes.insert(edge_node);
-                self.trie.root_node = Some(RootHandle::Loaded(node_id));
-                self.trie
-                    .cache_leaf_modified
-                    .insert(key_bytes, InsertOrRemove::Insert(value));
-
-                Ok(edge_node_hash)
-            }
-        }
-    }
-
-    /// Works like insert in tree.rs but also updates hashes recursively up the path
-    fn build_node_recursive<'a, DB: BonsaiDatabase, ID: Id>(
-        &mut self,
-        node_key: &NodeKey,
-        height: usize,
-        key: &BitSlice,
-        value: Felt,
-        path_nodes: &[(NodeKey, usize)],
-        db: &mut KeyValueDB<DB, ID>,
-    ) -> Result<Node, BonsaiStorageError<DB::DatabaseError>> {
-        let mut node = self
-            .trie
-            .get_node_mut::<DB>(*node_key)
-            .map_err(|_| PartialTrieError::NodeNotFound)?
-            .clone();
-
-        match &mut node {
-            Node::Edge(edge) => {
-                log::trace!("EDGE: {:?}", edge);
-                let common = edge.common_path(key);
-                let branch_height = edge.height as usize + common.len();
-
-                let key_bytes = bitslice_to_bytes(key);
-                if branch_height == key.len() {
-                    edge.child = NodeHandle::Hash(value);
-                    self.trie
-                        .cache_leaf_modified
-                        .insert(key_bytes, InsertOrRemove::Insert(value));
-                    return Ok(node);
-                }
-
-                let child_height = branch_height + 1;
-                // Path from binary node to new leaf
-                let new_path = key[child_height..].to_bitvec();
-                // Path from binary node to existing child
-                let old_path = edge.path[common.len() + 1..].to_bitvec();
-
-                self.trie
-                    .cache_leaf_modified
-                    .insert(key_bytes, InsertOrRemove::Insert(value));
-
-                let new_id = if new_path.is_empty() {
-                    NodeHandle::Hash(value)
-                } else {
-                    let edge_node = Node::Edge(EdgeNode {
-                        hash: None,
-                        path: Path(new_path),
-                        height: child_height as u64,
-                        child: NodeHandle::Hash(value),
-                    });
-                    let edge_id = self.trie.nodes.insert(edge_node);
-
-                    NodeHandle::InMemory(edge_id)
-                };
-
-                let old_id = if old_path.is_empty() {
-                    edge.child
-                } else {
-                    let edge_node = Node::Edge(EdgeNode {
-                        hash: None,
-                        path: Path(old_path),
-                        height: child_height as u64,
-                        child: edge.child,
-                    });
-
-                    let edge_id = self.trie.nodes.insert(edge_node);
-                    NodeHandle::InMemory(edge_id)
-                };
-
-                let new_direction = Direction::from(key[branch_height]);
-                let (left_child, right_child) = match new_direction {
-                    Direction::Left => (new_id, old_id),
-                    Direction::Right => (old_id, new_id),
-                };
-
-                let branch = Node::Binary(BinaryNode {
-                    hash: None,
-                    height: branch_height as u64,
-                    left: left_child,
-                    right: right_child,
-                });
-
-                let new_node = if common.is_empty() {
-                    branch
-                } else {
-                    let branch_node_key = self.trie.nodes.insert(branch);
-
-                    let new_node = Node::Edge(EdgeNode {
-                        hash: None,
-                        path: Path(common.to_bitvec()),
-                        height: edge.height,
-                        child: NodeHandle::InMemory(branch_node_key),
-                    });
-                    new_node
-                };
-
-                node = new_node;
-
-                let key_bytes = bitslice_to_bytes(&key[..height as usize]);
-                log::trace!("Adding to death row: {:?}", key_bytes);
-                self.trie.death_row.insert(TrieKey::Trie(key_bytes));
-                Ok(node)
-            }
-            Node::Binary(binary) => {
-                log::trace!("BINARY: {:?}", binary);
-                let child_height = binary.height + 1;
-                let direction = Direction::from(key[binary.height as usize]);
-
-                if child_height as usize == key.len() {
-                    match direction {
-                        Direction::Left => {
-                            binary.left = NodeHandle::Hash(value);
-                        }
-                        Direction::Right => {
-                            binary.right = NodeHandle::Hash(value);
-                        }
-                    };
-                    let key_bytes = bitslice_to_bytes(key);
-                    self.trie
-                        .cache_leaf_modified
-                        .insert(key_bytes, InsertOrRemove::Insert(value));
-
-                    Ok(node)
-                } else {
-                    log::trace!("Binary node not at path end - should fetch full trie");
-                    Err(PartialTrieError::NodeNotFound.into())
-                }
-            }
-        }
     }
 
     fn get_node_or_felt<DB: BonsaiDatabase>(
@@ -595,7 +410,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         identifier: &[u8],
         db: &KeyValueDB<DB, ID>,
         path: &Path,
-    ) -> Result<Option<PartialTrieNode>, BonsaiStorageError<DB::DatabaseError>> {
+    ) -> Result<Option<Node>, BonsaiStorageError<DB::DatabaseError>> {
         log::trace!("getting: {:b}", path.0);
 
         let path: ByteVec = path.into();
@@ -608,7 +423,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         db.get(&key)?
             .map(|node| {
                 log::trace!("got: {:?}", node);
-                PartialTrieNode::decode(&mut node.as_slice()).map_err(|err| {
+                Node::decode(&mut node.as_slice()).map_err(|err| {
                     BonsaiStorageError::Trie(format!("Couldn't decode node: {}", err))
                 })
             })
@@ -870,8 +685,6 @@ mod tests {
             tree_to_compare.insert(&identifier2, key, value).unwrap();
         }
 
-        //we update the full trie with new values which we inserted with build_from_visited_nodes() method
-        // just to be sure that we have the correct root
         tree_to_compare.commit(id_builder.new_id()).unwrap();
         let proof_keys = vec![keys.last().unwrap()];
         let proof = tree1

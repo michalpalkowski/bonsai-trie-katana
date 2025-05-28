@@ -3,11 +3,10 @@ use super::{
     path::Path,
     tree::{MerkleTree, NodeKey, RootHandle},
 };
-use crate::trie::merkle_node::{BinaryNode, EdgeNode, PartialTrieNode};
-use crate::trie::merkle_node::{EdgePartialTrieNode, ProofNodeHandle};
+use crate::trie::merkle_node::{BinaryNode, EdgeNode};
 use crate::{
-    id::Id, key_value_db::KeyValueDB, trie::merkle_node::BinaryPartialTrieNode, BitSlice,
-    BonsaiDatabase, BonsaiStorageError, DBError, MultiProof, ProofNode, Vec,
+    id::Id, key_value_db::KeyValueDB, BitSlice, BonsaiDatabase, BonsaiStorageError, DBError,
+    MultiProof, ProofNode, Vec,
 };
 use core::{fmt, marker::PhantomData};
 use starknet_types_core::{felt::Felt, hash::StarkHash};

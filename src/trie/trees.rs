@@ -56,7 +56,7 @@ impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id> MerkleTrees<H
             .entry_ref(identifier)
             .or_insert_with(|| MerkleTree::new(identifier.into(), self.max_height));
 
-        tree.set(&self.db, key, value)
+        tree.set(&self.db, key, value, None)
     }
 
     pub(crate) fn get(
@@ -281,7 +281,7 @@ impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id>
             .entry_ref(identifier)
             .or_insert_with(|| PartialTrie::new(identifier.into(), self.max_height));
 
-        tree.trie.set(&self.db, key, value)
+        tree.trie.set(&self.db, key, value, None)
     }
 
     pub(crate) fn get(
@@ -347,76 +347,6 @@ impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id>
         }
     }
 
-    // #[cfg(test)]
-    // pub fn dump(&self) {
-    //     log::trace!("====== NUMBER OF TREES: {} ======", self.trees.len());
-    //     self.trees.iter().for_each(|(k, tree)| {
-    //         log::trace!("TREE identifier={:?}:", k);
-    //         tree.dump();
-    //     });
-    // }
-
-    // pub(crate) fn root_hash(
-    //     &self,
-    //     identifier: &[u8],
-    // ) -> Result<Felt, BonsaiStorageError<DB::DatabaseError>> {
-    //     if let Some(tree) = self.trees.get(identifier) {
-    //         Ok(tree.root_hash(&self.db)?)
-    //     } else {
-    //         MerkleTree::<H>::new(identifier.into(), self.max_height).root_hash(&self.db)
-    //     }
-    // }
-
-    // pub(crate) fn get_keys(
-    //     &self,
-    //     identifier: &[u8],
-    // ) -> Result<Vec<Vec<u8>>, BonsaiStorageError<DB::DatabaseError>> {
-    //     self.db
-    //         .db
-    //         .get_by_prefix(&crate::DatabaseKey::Flat(identifier))
-    //         .map(|key_value_pairs| {
-    //             // Remove the identifier from the key
-    //             key_value_pairs
-    //                 .into_iter()
-    //                 // FIXME: this does not filter out keys values correctly for `HashMapDb` due
-    //                 // to branches and leafs not being differenciated
-    //                 .filter_map(|(key, _value)| {
-    //                     if key.len() > identifier.len() {
-    //                         Some(key[identifier.len() + 1..].into())
-    //                     } else {
-    //                         None
-    //                     }
-    //                 })
-    //                 .collect()
-    //         })
-    //         .map_err(|e| e.into())
-    // }
-
-    // #[allow(clippy::type_complexity)]
-    // pub(crate) fn get_key_value_pairs(
-    //     &self,
-    //     identifier: &[u8],
-    // ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, BonsaiStorageError<DB::DatabaseError>> {
-    //     self.db
-    //         .db
-    //         .get_by_prefix(&crate::DatabaseKey::Flat(identifier))
-    //         .map(|key_value_pairs| {
-    //             key_value_pairs
-    //                 .into_iter()
-    //                 // FIXME: this does not filter out keys values correctly for `HashMapDb` due
-    //                 // to branches and leafs not being differenciated
-    //                 .filter_map(|(key, value)| {
-    //                     if key.len() > identifier.len() {
-    //                         Some((key[identifier.len() + 1..].into(), value.into_vec()))
-    //                     } else {
-    //                         None
-    //                     }
-    //                 })
-    //                 .collect()
-    //         })
-    //         .map_err(|e| e.into())
-    // }
-
     pub(crate) fn commit(&mut self) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
         #[cfg(feature = "std")]
         use rayon::prelude::*;
@@ -451,29 +381,4 @@ impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id>
         self.db.write_batch(batch)?;
         Ok(())
     }
-
-    // pub(crate) fn get_proof(
-    //     &self,
-    //     identifier: &[u8],
-    //     key: &BitSlice,
-    // ) -> Result<Vec<ProofNode>, BonsaiStorageError<DB::DatabaseError>> {
-    //     if let Some(tree) = self.trees.get(identifier) {
-    //         tree.get_proof(&self.db, key)
-    //     } else {
-    //         MerkleTree::<H>::new(identifier.into()).get_proof(&self.db, key)
-    //     }
-    // }
-
-    // pub fn get_multi_proof(
-    //     &mut self,
-    //     identifier: &[u8],
-    //     keys: impl IntoIterator<Item = impl AsRef<BitSlice>>,
-    // ) -> Result<MultiProof, BonsaiStorageError<DB::DatabaseError>> {
-    //     let tree = self
-    //         .trees
-    //         .entry_ref(identifier)
-    //         .or_insert_with(|| MerkleTree::new(identifier.into(), self.max_height));
-
-    //     tree.get_multi_proof(&self.db, keys)
-    // }
 }
