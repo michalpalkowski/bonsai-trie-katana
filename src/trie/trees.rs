@@ -242,7 +242,7 @@ impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id> MerkleTrees<H
     }
 }
 
-pub(crate) struct PartialMerkleTrees<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id> {
+pub struct PartialMerkleTrees<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id> {
     pub db: KeyValueDB<DB, CommitID>,
     pub trees: HashMap<ByteVec, PartialTrie<H>>,
     pub max_height: u8,
