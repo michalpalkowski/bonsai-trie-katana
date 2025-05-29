@@ -121,7 +121,7 @@ pub type BitSlice = bitvec::slice::BitSlice<u8, bitvec::order::Msb0>;
 
 mod changes;
 mod key_value_db;
-mod trie;
+pub mod trie;
 
 mod bonsai_database;
 /// All databases already implemented in this crate.
