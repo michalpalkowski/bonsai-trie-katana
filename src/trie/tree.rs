@@ -100,7 +100,7 @@ impl<H: StarkHash> Clone for MerkleTree<H> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum InsertOrRemove<T> {
+pub enum InsertOrRemove<T> {
     Insert(T),
     Remove,
 }
