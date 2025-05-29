@@ -4,6 +4,6 @@ pub(crate) mod partial_trie;
 pub(crate) mod path;
 pub(crate) mod proof;
 pub mod tree;
-pub(crate) mod trees;
+pub mod trees;
 pub(crate) mod trie_db;
 pub(crate) use trie_db::TrieKey;
