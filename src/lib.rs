@@ -621,10 +621,13 @@ impl<ChangeID: Id, DB: BonsaiDatabase, H: StarkHash + Send + Sync>
     pub fn commit(
         &mut self,
         id: ChangeID,
-    ) -> Result<(), BonsaiStorageError<<DB as BonsaiDatabase>::DatabaseError>> {
+    ) -> Result<(), BonsaiStorageError<<DB as BonsaiDatabase>::DatabaseError>>
+    where
+        DB: BonsaiPersistentDatabase<ChangeID>,
+    {
         self.tries.commit()?;
         self.tries.db_mut().commit(id)?;
-        // self.tries.db_mut().create_snapshot(id);
+        self.tries.db_mut().create_snapshot(id);
         Ok(())
     }
 }
