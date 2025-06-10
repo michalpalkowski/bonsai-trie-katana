@@ -71,9 +71,9 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         proof: MultiProof,
         original_root: Felt,
     ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
-        if value == Felt::ZERO {
-            return Err(PartialTrieError::SetValueZero.into());
-        }
+        // if value == Felt::ZERO {
+        //     return Err(PartialTrieError::SetValueZero.into());
+        // }
 
         let path_nodes = self.seek_to(&key, proof, original_root, db)?;
 
