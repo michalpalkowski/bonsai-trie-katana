@@ -392,15 +392,11 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
             return Ok(None); // end of traversal
         }
 
-        println!("Proof node handle: {:?}", proof_node_handle);
-
         let next_node_id = self.tree.try_load_node_handle::<DB, ID>(
             self.db,
             proof_node_handle,
             &self.current_path,
         )?;
-
-        println!("Next node id: {:?}", next_node_id);
 
         if let Some(existing_node_id) = next_node_id {
             // Update parent ref after loading from db where we save only hashes
@@ -417,7 +413,6 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
                     edge_node.child = NodeHandle::InMemory(existing_node_id);
                 }
             };
-            println!("Existing node id: {:?}", existing_node_id);
 
             Ok(Some(existing_node_id))
         } else {
