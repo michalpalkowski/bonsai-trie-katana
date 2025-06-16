@@ -684,7 +684,11 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                         // Path from binary node to new leaf
                         let new_path = key[child_height..].to_bitvec();
                         // Path from binary node to existing child
-                        let old_path = edge.path[common.len() + 1..].to_bitvec();
+                        let old_path = if common.len() + 1 <= edge.path.len() {
+                            edge.path[common.len() + 1..].to_bitvec()
+                        } else {
+                            panic!("old_path is too short");
+                        };
 
                         // The new leaf branch of the binary node.
                         // (this may be edge -> leaf, or just leaf depending).
