@@ -327,7 +327,7 @@ mod tests {
             .map(|h| Felt::from_hex(h).unwrap().to_bytes_be().as_bits()[5..].to_owned())
             .collect();
 
-        base_tree.insert(&identifier, &key_1, &Felt::from_hex("0x1b97e0ef7f5c2f2b7483cda252a3accc7f917773fb69d4bd290f92770069aec").unwrap()).unwrap();
+        base_tree.insert(&identifier, &key_1, &Felt::from_hex("0x1").unwrap()).unwrap();
         base_tree.commit(id_builder.new_id()).unwrap();
 
         base_tree.insert(&identifier, &key_2, &Felt::from(1)).unwrap();
@@ -389,7 +389,7 @@ mod tests {
             .map(|h| Felt::from_hex(h).unwrap().to_bytes_be().as_bits()[5..].to_owned())
             .collect();
 
-        base_tree.insert(&identifier, &key_1, &Felt::from_hex("0x1b97e0ef7f5c2f2b7483cda252a3accc7f917773fb69d4bd290f92770069aec").unwrap()).unwrap();
+        base_tree.insert(&identifier, &key_1, &Felt::from_hex("0x1").unwrap()).unwrap();
         base_tree.commit(id_builder.new_id()).unwrap();
 
         base_tree.insert(&identifier, &key_2, &Felt::from(1)).unwrap();
