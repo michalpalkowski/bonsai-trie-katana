@@ -639,7 +639,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
             let mut iter = self.iter(db);
             iter.seek_to(key)?;
             log::trace!("Iter is {:?}", iter);
-            println!("PATH NODES TO SET ORIGINAL MAINNET {:?}", path_nodes);
             iter.current_nodes_heights
         };
 
