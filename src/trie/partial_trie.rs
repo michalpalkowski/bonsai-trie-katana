@@ -76,6 +76,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         // }
 
         let path_nodes = self.seek_to(&key, proof, original_root, db)?;
+        println!("PATH NODES for set with proof: {:?}", path_nodes);
 
         self.trie.set(db, key, value, Some(path_nodes))?;
 
