@@ -737,4 +737,396 @@ mod tests {
             "UPDATING ROOT FAILED"
         );
     }
+    #[test]
+    fn test_bonsai_partial_trie_realistic() {
+        use bitvec::view::AsBits;
+        let base_path = tempfile::tempdir().unwrap().path().to_path_buf();
+        let base_db = create_rocks_db(&base_path).unwrap();
+        
+        let fork_path = tempfile::tempdir().unwrap().path().to_path_buf();
+        let fork_db = create_rocks_db(&fork_path).unwrap();
+    
+        let identifier = vec![1];
+        let identifier2 = vec![2];
+    
+        let config = BonsaiStorageConfig::default();
+        
+        let mut base_tree: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
+            BonsaiStorage::new(
+                RocksDB::new(&base_db, RocksDBConfig::default()),
+                config.clone(),
+                251,
+            );
+    
+        let mut fork_tree: BonsaiStorage<
+            BasicId,
+            RocksDB<'_, BasicId>,
+            Pedersen,
+            PartialMerkleTrees<Pedersen, RocksDB<'_, BasicId>, BasicId>,
+        > = BonsaiStorage::new_partial(
+            RocksDB::new(&fork_db, RocksDBConfig::default()),
+            config.clone(),
+            251,
+        );
+    
+        let mut id_builder = BasicIdBuilder::new();
+
+        let mainnet_genesis_key: BitVec = Felt::from_hex("0x7dc7899aa655b0aae51eadff6d801a58e97dd99cf4666ee59e704249e51adf2")
+        .unwrap()
+        .to_bytes_be()
+        .as_bits()[5..]
+        .to_owned();
+        println!("MAINNET GENESIS KEY 0x7dc7899aa655b0aae51eadff6d801a58e97dd99cf4666ee59e704249e51adf2: {:?}", mainnet_genesis_key);
+    
+        let mainnet_key = Felt::from_hex("0x70388df3dbdff1dac1f867fd5e418893daf4db7a44dea33824f66c924625358")
+        .unwrap()
+        .to_bytes_be()
+        .as_bits()[5..]
+        .to_owned();
+
+        println!("MAINNET KEY 0x70388df3dbdff1dac1f867fd5e418893daf4db7a44dea33824f66c924625358: {:?}", mainnet_key);
+
+        let fork_key1: BitVec = Felt::from_hex("0x37ced5be9b4c84415d796cdd2ccf841fc83dc56b27c9e1b5d2ff018ed925bb8")
+        .unwrap()
+        .to_bytes_be()
+        .as_bits()[5..]
+        .to_owned();
+        println!("FORK KEY 0x37ced5be9b4c84415d796cdd2ccf841fc83dc56b27c9e1b5d2ff018ed925bb8 : {:?}", fork_key1);
+
+        let fork_key2: BitVec = Felt::from_hex("0x718254e2758595671ae17a81506b88489ed5ab6ea4664cd36fcb2b14e970831")
+        .unwrap()
+        .to_bytes_be()
+        .as_bits()[5..]
+        .to_owned();
+
+        println!("FORK KEY 0x718254e2758595671ae17a81506b88489ed5ab6ea4664cd36fcb2b14e970831: {:?}", fork_key2);
+    
+        let fork_keys: Vec<BitVec> = vec![
+            "0x718254e2758595671ae17a81506b88489ed5ab6ea4664cd36fcb2b14e970831",
+            "0x37ced5be9b4c84415d796cdd2ccf841fc83dc56b27c9e1b5d2ff018ed925bb8",
+        ].iter()
+            .map(|h| Felt::from_hex(h).unwrap().to_bytes_be().as_bits()[5..].to_owned())
+            .collect();
+
+        base_tree.insert(&identifier, &mainnet_genesis_key, &Felt::from_hex("0x1b97e0ef7f5c2f2b7483cda252a3accc7f917773fb69d4bd290f92770069aec").unwrap()).unwrap();
+        base_tree.commit(id_builder.new_id()).unwrap();
+
+        base_tree.insert(&identifier, &mainnet_key, &Felt::from(1)).unwrap();
+        base_tree.commit(id_builder.new_id()).unwrap();
+        let original_root = base_tree.root_hash(&identifier).unwrap();
+  
+        let tree1 = base_tree.tries.trees.get_mut(&smallvec::smallvec![1]).unwrap();
+        let proof = tree1.get_multi_proof(&base_tree.tries.db, &fork_keys).unwrap();
+        println!("Proof: {:?}", proof);
+
+        let verified_values = proof
+            .verify_proof::<Pedersen>(
+                tree1.root_hash(&base_tree.tries.db).unwrap(),
+                fork_keys.iter(),
+                251
+            )
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        println!("Verified values: {:?}", verified_values);
+
+        for (i, key) in fork_keys.iter().enumerate() {
+            println!("Inserting hash {}: {:?}", i+1, key);
+            fork_tree
+                .insert_with_proof(&identifier2, key, &Felt::from(1), proof.clone(), original_root)
+                .unwrap();
+            fork_tree.commit(id_builder.new_id()).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_bonsai_partial_trie_realistic_sequential() {
+        use bitvec::view::AsBits;
+        let base_path = tempfile::tempdir().unwrap().path().to_path_buf();
+        let base_db = create_rocks_db(&base_path).unwrap();
+        
+        let fork_path = tempfile::tempdir().unwrap().path().to_path_buf();
+        let fork_db = create_rocks_db(&fork_path).unwrap();
+    
+        let identifier = vec![1];
+        let identifier2 = vec![2];
+    
+        let config = BonsaiStorageConfig::default();
+        
+        let mut base_tree: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
+            BonsaiStorage::new(
+                RocksDB::new(&base_db, RocksDBConfig::default()),
+                config.clone(),
+                251,
+            );
+    
+        let mut fork_tree: BonsaiStorage<
+            BasicId,
+            RocksDB<'_, BasicId>,
+            Pedersen,
+            PartialMerkleTrees<Pedersen, RocksDB<'_, BasicId>, BasicId>,
+        > = BonsaiStorage::new_partial(
+            RocksDB::new(&fork_db, RocksDBConfig::default()),
+            config.clone(),
+            251,
+        );
+    
+        let mut id_builder = BasicIdBuilder::new();
+
+        let mainnet_genesis_key: BitVec = Felt::from_hex("0x7dc7899aa655b0aae51eadff6d801a58e97dd99cf4666ee59e704249e51adf2")
+        .unwrap()
+        .to_bytes_be()
+        .as_bits()[5..]
+        .to_owned();
+        println!("MAINNET GENESIS KEY 0x7dc7899aa655b0aae51eadff6d801a58e97dd99cf4666ee59e704249e51adf2: {:?}", mainnet_genesis_key);
+    
+        let mainnet_key = Felt::from_hex("0x70388df3dbdff1dac1f867fd5e418893daf4db7a44dea33824f66c924625358")
+        .unwrap()
+        .to_bytes_be()
+        .as_bits()[5..]
+        .to_owned();
+
+        println!("MAINNET KEY 0x70388df3dbdff1dac1f867fd5e418893daf4db7a44dea33824f66c924625358: {:?}", mainnet_key);
+
+        let fork_key1: BitVec = Felt::from_hex("0x37ced5be9b4c84415d796cdd2ccf841fc83dc56b27c9e1b5d2ff018ed925bb8")
+        .unwrap()
+        .to_bytes_be()
+        .as_bits()[5..]
+        .to_owned();
+        println!("FORK KEY 0x37ced5be9b4c84415d796cdd2ccf841fc83dc56b27c9e1b5d2ff018ed925bb8 : {:?}", fork_key1);
+
+        let fork_key2: BitVec = Felt::from_hex("0x718254e2758595671ae17a81506b88489ed5ab6ea4664cd36fcb2b14e970831")
+        .unwrap()
+        .to_bytes_be()
+        .as_bits()[5..]
+        .to_owned();
+
+        println!("FORK KEY 0x718254e2758595671ae17a81506b88489ed5ab6ea4664cd36fcb2b14e970831: {:?}", fork_key2);
+    
+        let fork_keys: Vec<BitVec> = vec![
+            "0x37ced5be9b4c84415d796cdd2ccf841fc83dc56b27c9e1b5d2ff018ed925bb8",
+            "0x718254e2758595671ae17a81506b88489ed5ab6ea4664cd36fcb2b14e970831",
+        ].iter()
+            .map(|h| Felt::from_hex(h).unwrap().to_bytes_be().as_bits()[5..].to_owned())
+            .collect();
+
+        // Wstawiamy TYLKO jeden hash do base_tree (jak w mainnet)
+        base_tree.insert(&identifier, &mainnet_genesis_key, &Felt::from_hex("0x1b97e0ef7f5c2f2b7483cda252a3accc7f917773fb69d4bd290f92770069aec").unwrap()).unwrap();
+        base_tree.commit(id_builder.new_id()).unwrap();
+
+        base_tree.insert(&identifier, &mainnet_key, &Felt::from(1)).unwrap();
+        base_tree.commit(id_builder.new_id()).unwrap();
+        let original_root = base_tree.root_hash(&identifier).unwrap();
+    
+        // Pobieramy proof z drzewa które ma tylko jeden węzeł
+        let tree1 = base_tree.tries.trees.get_mut(&smallvec::smallvec![1]).unwrap();
+        let proof = tree1.get_multi_proof(&base_tree.tries.db, vec![&fork_keys[0]]).unwrap();
+        println!("Proof: {:?}", proof);
+
+        let proof2 = tree1.get_multi_proof(&base_tree.tries.db, vec![&fork_keys[1]]).unwrap();
+        println!("Proof: {:?}", proof2);
+
+        fork_tree
+            .insert_with_proof(&identifier2, &fork_keys[0], &Felt::from(1), proof.clone(), original_root)
+            .unwrap();
+        fork_tree.commit(id_builder.new_id()).unwrap();
+
+        fork_tree
+            .insert_with_proof(&identifier2, &fork_keys[1], &Felt::from(1), proof2.clone(), original_root)
+            .unwrap();
+        fork_tree.commit(id_builder.new_id()).unwrap();
+    }
+
+    #[test]
+    fn test_katana_multiproof_implementation() {
+        use bitvec::view::AsBits;
+        let base_path = tempfile::tempdir().unwrap().path().to_path_buf();
+        let base_db = create_rocks_db(&base_path).unwrap();
+        let config = BonsaiStorageConfig::default();
+        let identifier = vec![1];
+
+        let mut base_tree: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
+            BonsaiStorage::new(
+                RocksDB::new(&base_db, RocksDBConfig::default()),
+                config.clone(),
+                251,
+            );
+    
+        let mut id_builder = BasicIdBuilder::new();
+
+        let mainnet_genesis_key: BitVec = Felt::from_hex("0x7dc7899aa655b0aae51eadff6d801a58e97dd99cf4666ee59e704249e51adf2")
+        .unwrap()
+        .to_bytes_be()
+        .as_bits()[5..]
+        .to_owned();
+    
+        let mainnet_key = Felt::from_hex("0x70388df3dbdff1dac1f867fd5e418893daf4db7a44dea33824f66c924625358")
+        .unwrap()
+        .to_bytes_be()
+        .as_bits()[5..]
+        .to_owned();
+    
+        let fork_keys: Vec<BitVec> = vec![
+            "0x37ced5be9b4c84415d796cdd2ccf841fc83dc56b27c9e1b5d2ff018ed925bb8",
+            "0x718254e2758595671ae17a81506b88489ed5ab6ea4664cd36fcb2b14e970831",
+        ].iter()
+            .map(|h| Felt::from_hex(h).unwrap().to_bytes_be().as_bits()[5..].to_owned())
+            .collect();
+
+        base_tree.insert(&identifier, &mainnet_genesis_key, &Felt::from_hex("0x1b97e0ef7f5c2f2b7483cda252a3accc7f917773fb69d4bd290f92770069aec").unwrap()).unwrap();
+        base_tree.commit(id_builder.new_id()).unwrap();
+
+        base_tree.insert(&identifier, &mainnet_key, &Felt::from(1)).unwrap();
+        base_tree.commit(id_builder.new_id()).unwrap();
+    
+        // Pobieramy proof z drzewa które ma tylko jeden węzeł
+        let tree1 = base_tree.tries.trees.get_mut(&smallvec::smallvec![1]).unwrap();
+        let proof = tree1.get_multi_proof(&base_tree.tries.db, &fork_keys).unwrap();
+        println!("Proof: {:?}", proof);
+
+        // Weryfikujemy proof przed użyciem
+        let verified_values = proof
+            .verify_proof::<Pedersen>(
+                tree1.root_hash(&base_tree.tries.db).unwrap(),
+                fork_keys.iter(),
+                251
+            )
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        println!("Verified values: {:?}", verified_values);
+    }
+
+    #[test]
+    fn test_bonsai_partial_trie_realistic_state_updates() {
+        use bitvec::view::AsBits;
+        use std::collections::{BTreeMap, BTreeSet};
+        
+        let base_path = tempfile::tempdir().unwrap().path().to_path_buf();
+        let base_db = create_rocks_db(&base_path).unwrap();
+        
+        let fork_path = tempfile::tempdir().unwrap().path().to_path_buf();
+        let fork_db = create_rocks_db(&fork_path).unwrap();
+
+        let identifier = vec![1];
+        let identifier2 = vec![2];
+
+        let config = BonsaiStorageConfig::default();
+        
+        let mut base_tree: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
+            BonsaiStorage::new(
+                RocksDB::new(&base_db, RocksDBConfig::default()),
+                config.clone(),
+                251,
+            );
+
+        let mut fork_tree: BonsaiStorage<
+            BasicId,
+            RocksDB<'_, BasicId>,
+            Pedersen,
+            PartialMerkleTrees<Pedersen, RocksDB<'_, BasicId>, BasicId>,
+        > = BonsaiStorage::new_partial(
+            RocksDB::new(&fork_db, RocksDBConfig::default()),
+            config.clone(),
+            251,
+        );
+
+        let mut id_builder = BasicIdBuilder::new();
+
+        // First state update key-value pairs
+        let mainnet_key: BitVec = Felt::from_hex("0x4c3417b29b568b0ef3f6c1e4ab6aa844a26f7b6539f3853cae3c486e55f4774")
+            .unwrap()
+            .to_bytes_be()
+            .as_bits()[5..]
+            .to_owned();
+        let mainnet_storage_key: BitVec = Felt::from_hex("0x4a5a2c375049e95f607711931a1a769417f89039fed65079eabd64c24d38e42")
+            .unwrap()
+            .to_bytes_be()
+            .as_bits()[5..]
+            .to_owned();
+
+        // Fork update key-value pairs
+        let fork_keys: Vec<BitVec> = vec![
+            "0x140d99b5f8493f04b1f1eb09734048e2860352cc76cd57f9b2e2a4deafbc9c0",
+            "0x246258999ea81791cf6e6873e9cffb15c27c4e96b99558d78ff7e3c177d73c8",
+            "0x3d2d7cf3e9a59d09ed30e4812ab0d0cbd8cda5bdaa14a1bf5abe3ce6536ea7c",
+        ]
+        .iter()
+        .map(|h| Felt::from_hex(h).unwrap().to_bytes_be().as_bits()[5..].to_owned())
+        .collect();
+
+        let fork_storage_keys: Vec<BitVec> = vec![
+            "0x583c1577dbf79ea735212c1efd9ddfdb2a420f127dc41ade30c5a5eba1c4a99",
+            "0x733b441dffcbdacb7053ff7b7945630595fa41da83364eb5d895357b4b40161",
+        ]
+        .iter()
+        .map(|h| Felt::from_hex(h).unwrap().to_bytes_be().as_bits()[5..].to_owned())
+        .collect();
+
+        // Insert mainnet state (base state)
+        base_tree.insert(&identifier, &mainnet_key, &Felt::from_hex("0x62576819614310f8057eb43f55b68e2a6792cddfe004e44556ec20c4cf16961").unwrap()).unwrap();
+        base_tree.insert(&identifier, &mainnet_storage_key, &Felt::from_hex("0x586f349aea8bf53b351e504c8e0943fcdc1372278dda1c0fcd93f019e8e0814").unwrap()).unwrap();
+        base_tree.commit(id_builder.new_id()).unwrap();
+        
+        let original_root = base_tree.root_hash(&identifier).unwrap();
+        println!("Original root: {:?}", original_root);
+
+        // Get proof for fork keys
+        let tree1 = base_tree.tries.trees.get_mut(&smallvec::smallvec![1]).unwrap();
+        let proof = tree1.get_multi_proof(&base_tree.tries.db, &fork_keys).unwrap();
+        println!("Proof: {:?}", proof);
+
+        // Verify proof before using
+        let verified_values = proof
+            .verify_proof::<Pedersen>(
+                tree1.root_hash(&base_tree.tries.db).unwrap(),
+                fork_keys.iter(),
+                251
+            )
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        println!("Verified values: {:?}", verified_values);
+
+        // Try to insert all fork keys using the same proof
+        for (i, key) in fork_keys.iter().enumerate() {
+            println!("Inserting fork key {}: {:?}", i+1, key);
+            fork_tree
+                .insert_with_proof(&identifier2, key, &Felt::from(1), proof.clone(), original_root)
+                .unwrap();
+            fork_tree.commit(id_builder.new_id()).unwrap();
+        }
+
+        // Now try storage keys
+        let storage_proof = tree1.get_multi_proof(&base_tree.tries.db, &fork_storage_keys).unwrap();
+        println!("Storage proof: {:?}", storage_proof);
+
+        // Verify storage proof
+        let verified_storage_values = storage_proof
+            .verify_proof::<Pedersen>(
+                tree1.root_hash(&base_tree.tries.db).unwrap(),
+                fork_storage_keys.iter(),
+                251
+            )
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        println!("Verified storage values: {:?}", verified_storage_values);
+
+        // Try to insert storage updates
+        for (i, key) in fork_storage_keys.iter().enumerate() {
+            println!("Inserting storage key {}: {:?}", i+1, key);
+            fork_tree
+                .insert_with_proof(
+                    &identifier2,
+                    key,
+                    &Felt::from_hex(if i == 0 {
+                        "0x444ee6e16db8753006d1c652983f70677fd5c265b8ee2c4a34878b7e2944208"
+                    } else {
+                        "0x47167540f0d2d3a0b25868977946cea754c0efade3bb81bda52672b26c69f89"
+                    })
+                    .unwrap(),
+                    storage_proof.clone(),
+                    original_root
+                )
+                .unwrap();
+            fork_tree.commit(id_builder.new_id()).unwrap();
+        }
+    }
 }

@@ -660,10 +660,12 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         //    split may be the final bit (no post edge).
 
         log::trace!("preload nodes: {:?}", path_nodes);
+        println!("path_nodes: {:?}", path_nodes);
         use Node::*;
         match path_nodes.last() {
             Some((node_id, _)) => {
                 let mut node = self.get_node_mut::<DB>(*node_id)?.clone();
+                println!("node: {:?}", node);
                 match &mut node {
                     Edge(edge) => {
                         let common = edge.common_path(key);
@@ -680,14 +682,17 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                         }
                         // Height of the binary node's children
                         let child_height = branch_height + 1;
+                        println!("key: {:?}", key);
 
+                        println!("common: {:?}", common);
                         // Path from binary node to new leaf
                         let new_path = key[child_height..].to_bitvec();
                         // Path from binary node to existing child
                         let old_path = if common.len() + 1 <= edge.path.len() {
+                            println!("old_path: {:?}", edge.path[common.len() + 1..].to_bitvec());
                             edge.path[common.len() + 1..].to_bitvec()
                         } else {
-                            panic!("old_path is too short");
+                            panic!("old_path is too short: edge.path len: {}, common len: {}, key: {:?}", edge.path.len(), common.len(), key);
                         };
 
                         // The new leaf branch of the binary node.
