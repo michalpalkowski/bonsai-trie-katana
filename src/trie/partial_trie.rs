@@ -74,6 +74,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         // if value == Felt::ZERO {
         //     return Err(PartialTrieError::SetValueZero.into());
         // }
+        println!("PROOF to set partial trie: {:?}", proof);
 
         let path_nodes = self.seek_to(&key, proof, original_root, db)?;
         println!("PATH NODES for set with proof: {:?}", path_nodes);
