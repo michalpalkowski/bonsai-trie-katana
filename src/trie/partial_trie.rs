@@ -985,7 +985,7 @@ mod tests {
         let proof = tree1.get_multi_proof(&base_tree.tries.db, &fork_keys).unwrap();
         println!("Proof: {:?}", proof);
 
-        // Weryfikujemy proof przed użyciem
+        // Verify proof before using
         let verified_values = proof
             .verify_proof::<Pedersen>(
                 tree1.root_hash(&base_tree.tries.db).unwrap(),
@@ -1000,7 +1000,7 @@ mod tests {
     #[test]
     fn test_bonsai_partial_trie_realistic_state_updates() {
         use bitvec::view::AsBits;
-        use std::collections::{BTreeMap, BTreeSet};
+        use std::collections::BTreeMap;
         
         let base_path = tempfile::tempdir().unwrap().path().to_path_buf();
         let base_db = create_rocks_db(&base_path).unwrap();
@@ -1013,7 +1013,8 @@ mod tests {
 
         let config = BonsaiStorageConfig::default();
         
-        let mut base_tree: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
+        // OUTER TREE: address -> root(storage tree)
+        let mut outer_tree: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
             BonsaiStorage::new(
                 RocksDB::new(&base_db, RocksDBConfig::default()),
                 config.clone(),
@@ -1030,193 +1031,229 @@ mod tests {
             config.clone(),
             251,
         );
-
         let mut id_builder = BasicIdBuilder::new();
 
-        // // Mainnet genesis class hash
-        // let mainnet_genesis_key: BitVec = Felt::from_hex("0x7dc7899aa655b0aae51eadff6d801a58e97dd99cf4666ee59e704249e51adf2")
-        //     .unwrap()
-        //     .to_bytes_be()
-        //     .as_bits()[5..]
-        //     .to_owned();
-
-        // // Mainnet contract address
-        // let mainnet_key: BitVec = Felt::from_hex("0x4c3417b29b568b0ef3f6c1e4ab6aa844a26f7b6539f3853cae3c486e55f4774")
-        //     .unwrap()
-        //     .to_bytes_be()
-        //     .as_bits()[5..]
-        //     .to_owned();
-
-        // Storage keys and values for mainnet genesis
-        let storage_updates = vec![
+        // Przygotuj storage_updates: Vec<(address, Vec<(storage_key, value)>)>
+        let storage_updates: Vec<(Felt, Vec<(Felt, Felt)>)> = vec![
             (
                 Felt::from_hex("0x1379ac0624b939ceb9dede92211d7db5ee174fe28be72245b0a1a2abd81c98f").unwrap(),
                 vec![
-                    Felt::from_hex("0x1501c0282d931e940cb3efce8df72c92216feadfac0b9163cc14261f80fa3a4").unwrap(),
-                    Felt::from_hex("0x78e6e3e4a50285be0f6e8d0b8a61044033e24023df6eb95979ae4073f159ae6").unwrap(),
-                    Felt::from_hex("0x22796e1e0b20cd19185398001252dbbced3066054dbbab226c1d020a7e51fad").unwrap(),
-                    Felt::from_hex("0x2e5225082a276453856402ad3ed1921fd32a5b5f7ff0d723fb5f01963fdd7cf").unwrap(),
-                    Felt::from_hex("0x209b4f5c516c51edc98ba1ff716c61582a36bd9f1ec77d74fd194f45abc18e4").unwrap(),
-                    Felt::from_hex("0x3e642788efd4974adc7a73d0c0da0088ec55afeda0578ac185d60c2c0a8c243").unwrap(),
-                    Felt::from_hex("0x2f99396aad3919789352397b13bf620e00a30d72e364743043651d1f9dc81a2").unwrap(),
-                    Felt::from_hex("0x2be7210355a6a885bc5e3a0a8d0c6668d861f72e0b80ce42a648927ac9fde8f").unwrap(),
-                    Felt::from_hex("0x4eeeccfe0f96035b2576bdd3480ec340eb3150eca79dde7cfe574c573bb4be8").unwrap(),
-                    Felt::from_hex("0x42397031114e40d63d644b2bfb08b960218900d9ae8e33e7a9e0e3a5f8b9a3c").unwrap(),
+                    (Felt::from_hex("0x1501c0282d931e940cb3efce8df72c92216feadfac0b9163cc14261f80fa3a4").unwrap(), Felt::from_hex("0x1501c0282d931e940cb3efce8df72c92216feadfac0b9163cc14261f80fa3a4").unwrap()),
+                    (Felt::from_hex("0x78e6e3e4a50285be0f6e8d0b8a61044033e24023df6eb95979ae4073f159ae6").unwrap(), Felt::from_hex("0x78e6e3e4a50285be0f6e8d0b8a61044033e24023df6eb95979ae4073f159ae6").unwrap()),
+                    (Felt::from_hex("0x22796e1e0b20cd19185398001252dbbced3066054dbbab226c1d020a7e51fad").unwrap(), Felt::from_hex("0x22796e1e0b20cd19185398001252dbbced3066054dbbab226c1d020a7e51fad").unwrap()),
+                    (Felt::from_hex("0x2e5225082a276453856402ad3ed1921fd32a5b5f7ff0d723fb5f01963fdd7cf").unwrap(), Felt::from_hex("0x2e5225082a276453856402ad3ed1921fd32a5b5f7ff0d723fb5f01963fdd7cf").unwrap()),
+                    (Felt::from_hex("0x209b4f5c516c51edc98ba1ff716c61582a36bd9f1ec77d74fd194f45abc18e4").unwrap(), Felt::from_hex("0x209b4f5c516c51edc98ba1ff716c61582a36bd9f1ec77d74fd194f45abc18e4").unwrap()),
+                    (Felt::from_hex("0x3e642788efd4974adc7a73d0c0da0088ec55afeda0578ac185d60c2c0a8c243").unwrap(), Felt::from_hex("0x3e642788efd4974adc7a73d0c0da0088ec55afeda0578ac185d60c2c0a8c243").unwrap()),
+                    (Felt::from_hex("0x2f99396aad3919789352397b13bf620e00a30d72e364743043651d1f9dc81a2").unwrap(), Felt::from_hex("0x2f99396aad3919789352397b13bf620e00a30d72e364743043651d1f9dc81a2").unwrap()),
+                    (Felt::from_hex("0x2be7210355a6a885bc5e3a0a8d0c6668d861f72e0b80ce42a648927ac9fde8f").unwrap(), Felt::from_hex("0x2be7210355a6a885bc5e3a0a8d0c6668d861f72e0b80ce42a648927ac9fde8f").unwrap()),
+                    (Felt::from_hex("0x4eeeccfe0f96035b2576bdd3480ec340eb3150eca79dde7cfe574c573bb4be8").unwrap(), Felt::from_hex("0x4eeeccfe0f96035b2576bdd3480ec340eb3150eca79dde7cfe574c573bb4be8").unwrap()),
+                    (Felt::from_hex("0x42397031114e40d63d644b2bfb08b960218900d9ae8e33e7a9e0e3a5f8b9a3c").unwrap(), Felt::from_hex("0x42397031114e40d63d644b2bfb08b960218900d9ae8e33e7a9e0e3a5f8b9a3c").unwrap()),
                 ]
             ),
             (
                 Felt::from_hex("0xb6ce5410fca59d078ee9b2a4371a9d684c530d697c64fbef0ae6d5e8f0ac72").unwrap(),
                 vec![
-                    Felt::from_hex("0x5354524b").unwrap(),
-                    Felt::from_hex("0x455448").unwrap(),
+                    (Felt::from_hex("0x5354524b").unwrap(), Felt::from_hex("0x5354524b").unwrap()),
+                    (Felt::from_hex("0x455448").unwrap(), Felt::from_hex("0x455448").unwrap()),
                 ]
             ),
             (
                 Felt::from_hex("0x110e2f729c9c2b988559994a3daccd838cf52faf88e18101373e67dd061455a").unwrap(),
                 vec![
-                    Felt::from_hex("0x152d02c7e14af6800000").unwrap(),
-                    Felt::from_hex("0x152d02c7e14af6800000").unwrap(),
+                    (Felt::from_hex("0x152d02c7e14af6800000").unwrap(), Felt::from_hex("0x152d02c7e14af6800000").unwrap()),
+                    (Felt::from_hex("0x152d02c7e14af6800000").unwrap(), Felt::from_hex("0x152d02c7e14af6800000").unwrap()),
                 ]
             ),
             (
                 Felt::from_hex("0x110e2f729c9c2b988559994a3daccd838cf52faf88e18101373e67dd061455b").unwrap(),
-                vec![Felt::from_hex("0x0").unwrap()]
+                vec![
+                    (Felt::from_hex("0x0").unwrap(), Felt::from_hex("0x0").unwrap()),
+                ]
             ),
             (
                 Felt::from_hex("0x1ece7a660290ddd5c1d8cb8796de9f74e8a9b99ce52c3bc433a24b128d357d5").unwrap(),
-                vec![Felt::from_hex("0x21e19e0c9bab2400000").unwrap()]
+                vec![
+                    (Felt::from_hex("0x21e19e0c9bab2400000").unwrap(), Felt::from_hex("0x21e19e0c9bab2400000").unwrap()),
+                ]
             ),
             (
                 Felt::from_hex("0x1ece7a660290ddd5c1d8cb8796de9f74e8a9b99ce52c3bc433a24b128d357d6").unwrap(),
-                vec![Felt::from_hex("0x0").unwrap()]
+                vec![
+                    (Felt::from_hex("0x0").unwrap(), Felt::from_hex("0x0").unwrap()),
+                ]
             ),
             (
                 Felt::from_hex("0x1f0d4aa99431d246bac9b8e48c33e888245b15e9678f64f9bdfc8823dc8f979").unwrap(),
-                vec![Felt::from_hex("0x12").unwrap()]
+                vec![
+                    (Felt::from_hex("0x12").unwrap(), Felt::from_hex("0x12").unwrap()),
+                ]
             ),
             (
                 Felt::from_hex("0x2a4a6011e8eeb2db7aab0c3d512034900714454f9bb4b015b423bd0038ff2c6").unwrap(),
-                vec![Felt::from_hex("0x21e19e0c9bab2400000").unwrap()]
+                vec![
+                    (Felt::from_hex("0x21e19e0c9bab2400000").unwrap(), Felt::from_hex("0x21e19e0c9bab2400000").unwrap()),
+                ]
             ),
             (
                 Felt::from_hex("0x2a4a6011e8eeb2db7aab0c3d512034900714454f9bb4b015b423bd0038ff2c7").unwrap(),
-                vec![Felt::from_hex("0x0").unwrap()]
+                vec![
+                    (Felt::from_hex("0x0").unwrap(), Felt::from_hex("0x0").unwrap()),
+                ]
             ),
             (
                 Felt::from_hex("0x2dd9efcd0ced299772bb139967f74c09416fafc2057fe7370e37abe25b1917e").unwrap(),
-                vec![Felt::from_hex("0x21e19e0c9bab2400000").unwrap()]
+                vec![
+                    (Felt::from_hex("0x21e19e0c9bab2400000").unwrap(), Felt::from_hex("0x21e19e0c9bab2400000").unwrap()),
+                ]
             ),
             (
                 Felt::from_hex("0x2dd9efcd0ced299772bb139967f74c09416fafc2057fe7370e37abe25b1917f").unwrap(),
-                vec![Felt::from_hex("0x0").unwrap()]
+                vec![
+                    (Felt::from_hex("0x0").unwrap(), Felt::from_hex("0x0").unwrap()),
+                ]
             ),
             (
                 Felt::from_hex("0x341c1bdfd89f69748aa00b5742b03adbffd79b8e80cab5c50d91cd8c2a79be1").unwrap(),
                 vec![
-                    Felt::from_hex("0x537461726b6e657420546f6b656e").unwrap(),
-                    Felt::from_hex("0x4574686572").unwrap(),
+                    (Felt::from_hex("0x537461726b6e657420546f6b656e").unwrap(), Felt::from_hex("0x537461726b6e657420546f6b656e").unwrap()),
+                    (Felt::from_hex("0x4574686572").unwrap(), Felt::from_hex("0x4574686572").unwrap()),
                 ]
             ),
             (
                 Felt::from_hex("0x422ef899fa6ee66d84f0e6631f4c3a5a437bfb3528c556d7ee4f579ed738c5c").unwrap(),
-                vec![Felt::from_hex("0x21e19e0c9bab2400000").unwrap()]
+                vec![
+                    (Felt::from_hex("0x21e19e0c9bab2400000").unwrap(), Felt::from_hex("0x21e19e0c9bab2400000").unwrap()),
+                ]
             ),
             (
                 Felt::from_hex("0x422ef899fa6ee66d84f0e6631f4c3a5a437bfb3528c556d7ee4f579ed738c5d").unwrap(),
-                vec![Felt::from_hex("0x0").unwrap()]
+                vec![
+                    (Felt::from_hex("0x0").unwrap(), Felt::from_hex("0x0").unwrap()),
+                ]
             ),
             (
                 Felt::from_hex("0x4a774c01093b1ef35cfe9809f95ace325718e1e031f8ab75286a677e274a239").unwrap(),
-                vec![Felt::from_hex("0x21e19e0c9bab2400000").unwrap()]
+                vec![
+                    (Felt::from_hex("0x21e19e0c9bab2400000").unwrap(), Felt::from_hex("0x21e19e0c9bab2400000").unwrap()),
+                ]
             ),
             (
                 Felt::from_hex("0x4a774c01093b1ef35cfe9809f95ace325718e1e031f8ab75286a677e274a23a").unwrap(),
-                vec![Felt::from_hex("0x0").unwrap()]
+                vec![
+                    (Felt::from_hex("0x0").unwrap(), Felt::from_hex("0x0").unwrap()),
+                ]
             ),
             (
                 Felt::from_hex("0x4b24eca698466cf1cdf8c720348131e11626ae79ce304915876d7ab5352cfcb").unwrap(),
-                vec![Felt::from_hex("0x21e19e0c9bab2400000").unwrap()]
+                vec![
+                    (Felt::from_hex("0x21e19e0c9bab2400000").unwrap(), Felt::from_hex("0x21e19e0c9bab2400000").unwrap()),
+                ]
             ),
             (
                 Felt::from_hex("0x4b24eca698466cf1cdf8c720348131e11626ae79ce304915876d7ab5352cfcc").unwrap(),
-                vec![Felt::from_hex("0x0").unwrap()]
+                vec![
+                    (Felt::from_hex("0x0").unwrap(), Felt::from_hex("0x0").unwrap()),
+                ]
             ),
             (
                 Felt::from_hex("0x614d03523bd9204d2b33d8601f39bd032af109785c861bbf8ab26c0fe899ef3").unwrap(),
-                vec![Felt::from_hex("0x21e19e0c9bab2400000").unwrap()]
+                vec![
+                    (Felt::from_hex("0x21e19e0c9bab2400000").unwrap(), Felt::from_hex("0x21e19e0c9bab2400000").unwrap()),
+                ]
             ),
             (
                 Felt::from_hex("0x614d03523bd9204d2b33d8601f39bd032af109785c861bbf8ab26c0fe899ef4").unwrap(),
-                vec![Felt::from_hex("0x0").unwrap()]
+                vec![
+                    (Felt::from_hex("0x0").unwrap(), Felt::from_hex("0x0").unwrap()),
+                ]
             ),
             (
                 Felt::from_hex("0x6618020c2100ec29213b1c97c0e0a8c4355e508005baf2e46e4eeb926cec09f").unwrap(),
-                vec![Felt::from_hex("0x21e19e0c9bab2400000").unwrap()]
+                vec![
+                    (Felt::from_hex("0x21e19e0c9bab2400000").unwrap(), Felt::from_hex("0x21e19e0c9bab2400000").unwrap()),
+                ]
             ),
             (
                 Felt::from_hex("0x6618020c2100ec29213b1c97c0e0a8c4355e508005baf2e46e4eeb926cec0a0").unwrap(),
-                vec![Felt::from_hex("0x0").unwrap()]
+                vec![
+                    (Felt::from_hex("0x0").unwrap(), Felt::from_hex("0x0").unwrap()),
+                ]
             ),
             (
                 Felt::from_hex("0x67840c21d0d3cba9ed504d8867dffe868f3d43708cfc0d7ed7980b511850070").unwrap(),
-                vec![Felt::from_hex("0x21e19e0c9bab2400000").unwrap()]
+                vec![
+                    (Felt::from_hex("0x21e19e0c9bab2400000").unwrap(), Felt::from_hex("0x21e19e0c9bab2400000").unwrap()),
+                ]
             ),
             (
                 Felt::from_hex("0x67840c21d0d3cba9ed504d8867dffe868f3d43708cfc0d7ed7980b511850071").unwrap(),
-                vec![Felt::from_hex("0x0").unwrap()]
+                vec![
+                    (Felt::from_hex("0x0").unwrap(), Felt::from_hex("0x0").unwrap()),
+                ]
             ),
             (
                 Felt::from_hex("0x6c0ee267f85c6984a8633519c45c9d7e72d618ce8744940c3eeeb85a3aa7996").unwrap(),
-                vec![Felt::from_hex("0x21e19e0c9bab2400000").unwrap()]
+                vec![
+                    (Felt::from_hex("0x21e19e0c9bab2400000").unwrap(), Felt::from_hex("0x21e19e0c9bab2400000").unwrap()),
+                ]
             ),
             (
                 Felt::from_hex("0x6c0ee267f85c6984a8633519c45c9d7e72d618ce8744940c3eeeb85a3aa7997").unwrap(),
-                vec![Felt::from_hex("0x0").unwrap()]
+                vec![
+                    (Felt::from_hex("0x0").unwrap(), Felt::from_hex("0x0").unwrap()),
+                ]
             ),
         ];
 
-        // Insert mainnet genesis class hash
-        // base_tree.insert(
-        //     &identifier,
-        //     &mainnet_genesis_key,
-        //     &Felt::from_hex("0x1b97e0ef7f5c2f2b7483cda252a3accc7f917773fb69d4bd290f92770069aec").unwrap()
-        // ).unwrap();
-
-        // Insert mainnet contract address
-        // base_tree.insert(&identifier, &mainnet_key, &Felt::from(1)).unwrap();
-
-        // Insert all storage keys and values
-        for (storage_key, values) in storage_updates {
-            let key_bits = storage_key.to_bytes_be().as_bits()[5..].to_owned();
-            for value in values {
-                base_tree.insert(&identifier, &key_bits, &value).unwrap();
+        // Dla każdego kontraktu: osobne storage tree, commit, root do outer_tree
+        for (address, storage_pairs) in &storage_updates {
+            // Nowe storage tree dla kontraktu
+            let mut storage_tree: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
+                BonsaiStorage::new(
+                    RocksDB::new(&base_db, RocksDBConfig::default()),
+                    config.clone(),
+                    251,
+                );
+            
+            // Wstaw wszystkie pary (storage_key, value) dla tego adresu
+            for (storage_key, value) in storage_pairs {
+                let key_bits = storage_key.to_bytes_be().as_bits()[5..].to_owned();
+                storage_tree.insert(&identifier, &key_bits, value).unwrap();
             }
+            
+            storage_tree.commit(id_builder.new_id()).unwrap();
+            let storage_root = storage_tree.root_hash(&identifier).unwrap();
+            let address_bits = address.to_bytes_be().as_bits()[5..].to_owned();
+            outer_tree.insert(&identifier, &address_bits, &storage_root).unwrap();
         }
+        outer_tree.commit(id_builder.new_id()).unwrap();
+        let mainnet_root = outer_tree.root_hash(&identifier).unwrap();
+        println!("Mainnet root: {:?}", mainnet_root);
 
-        // Fork keys - trzy adresy kontraktów bez żadnych storage updates
+        let initial_value = Felt::from_hex("0x4c3417b29b568b0ef3f6c1e4ab6aa844a26f7b6539f3853cae3c486e55f4774").unwrap();
+        let initial_value_bits = initial_value.to_bytes_be().as_bits()[5..].to_owned();
+        outer_tree.insert(&identifier, &initial_value_bits, &Felt::from(0)).unwrap();
+        outer_tree.commit(id_builder.new_id()).unwrap();
+
+        // Fork keys - adresy kontraktów bez storage
         let fork_keys: Vec<BitVec> = vec![
-            "0x140d99b5f8493f04b1f1eb09734048e2860352cc76cd57f9b2e2a4deafbc9c0",
-            "0x246258999ea81791cf6e6873e9cffb15c27c4e96b99558d78ff7e3c177d73c8",
             "0x3d2d7cf3e9a59d09ed30e4812ab0d0cbd8cda5bdaa14a1bf5abe3ce6536ea7c",
+            "0x246258999ea81791cf6e6873e9cffb15c27c4e96b99558d78ff7e3c177d73c8",
+            "0x140d99b5f8493f04b1f1eb09734048e2860352cc76cd57f9b2e2a4deafbc9c0",
         ]
         .iter()
         .map(|h| Felt::from_hex(h).unwrap().to_bytes_be().as_bits()[5..].to_owned())
         .collect();
-
-        base_tree.commit(id_builder.new_id()).unwrap();
         
-        let original_root = base_tree.root_hash(&identifier).unwrap();
-        println!("Original root: {:?}", original_root);
-
         // Get proof for fork keys
-        let tree1 = base_tree.tries.trees.get_mut(&smallvec::smallvec![1]).unwrap();
-        let proof = tree1.get_multi_proof(&base_tree.tries.db, &fork_keys).unwrap();
+        let tree1 = outer_tree.tries.trees.get_mut(&smallvec::smallvec![1]).unwrap();
+        let proof = tree1.get_multi_proof(&outer_tree.tries.db, &fork_keys).unwrap();
         println!("Proof: {:?}", proof);
 
         // Verify proof before using
         let verified_values = proof
             .verify_proof::<Pedersen>(
-                tree1.root_hash(&base_tree.tries.db).unwrap(),
+                tree1.root_hash(&outer_tree.tries.db).unwrap(),
                 fork_keys.iter(),
                 251
             )
@@ -1224,22 +1261,24 @@ mod tests {
             .unwrap();
         println!("Verified values: {:?}", verified_values);
 
-        // Try to insert all fork keys using the same proof
+        // Symuluj dokładnie ten sam błąd - próbuj wstawić adresy z pustym storage
+        // To powinno spowodować błąd "old_path is too short"
         for (i, key) in fork_keys.iter().enumerate() {
-            fork_tree
-                .insert_with_proof(&identifier2, key, &Felt::from(1), proof.clone(), original_root)
-                .unwrap();
-            fork_tree.commit(id_builder.new_id()).unwrap();
-            base_tree.insert(&identifier, key, &Felt::from(1)).unwrap();
-            base_tree.commit(id_builder.new_id()).unwrap();
-
+            println!("INSERTING LEAF HASH for address: {:?}", key);
+            // Próbuj wstawić z proof - to powinno spowodować błąd
+            let result = fork_tree.insert_with_proof(&identifier2, key, &Felt::from(0), proof.clone(), mainnet_root);
+            match result {
+                Ok(_) => {
+                    fork_tree.commit(id_builder.new_id()).unwrap();
+                    println!("Successfully inserted fork key {}", i+1);
+                }
+                Err(e) => {
+                    println!("Error inserting fork key {}: {:?}", i+1, e);
+                    // To jest oczekiwany błąd - "old_path is too short"
+                    panic!("Expected error occurred: {:?}", e);
+                }
+            }
         }
-
-        // Compare final roots
-        let fork_root = fork_tree.root_hash(&identifier2).unwrap();
-        let mainnet_root = base_tree.root_hash(&identifier).unwrap();
-        println!("Fork root: {:?}", fork_root);
-        println!("Mainnet root: {:?}", mainnet_root);
-        assert_eq!(fork_root, mainnet_root, "State roots do not match");
     }
 }
+
