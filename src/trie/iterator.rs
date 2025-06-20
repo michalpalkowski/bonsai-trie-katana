@@ -336,9 +336,8 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeTrave
             };
 
             next_to_visit = self.traverse_one(node_id, self.current_path.len(), key)?;
-            if let Some(next_id) = next_to_visit {
-                visitor.visit_node::<DB>(self.tree, next_id, self.current_path.len())?;
-            }
+            visitor.visit_node::<DB>(self.tree, node_id, self.current_path.len())?;
+
 
             log::trace!(
                 "Got nodeid={:?} height={}, cur path={:?}, next to visit={:?}",

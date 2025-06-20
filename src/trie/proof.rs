@@ -385,6 +385,7 @@ mod tests {
         let fork_keys: Vec<BitVec> = vec![
             "0x718254e2758595671ae17a81506b88489ed5ab6ea4664cd36fcb2b14e970831",
             "0x37ced5be9b4c84415d796cdd2ccf841fc83dc56b27c9e1b5d2ff018ed925bb8",
+            "0x140d99b5f8493f04b1f1eb09734048e2860352cc76cd57f9b2e2a4deafbc9c0",
         ].iter()
             .map(|h| Felt::from_hex(h).unwrap().to_bytes_be().as_bits()[5..].to_owned())
             .collect();
