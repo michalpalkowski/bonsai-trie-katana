@@ -288,60 +288,73 @@ mod tests {
 
     #[test]
     fn test_get_multi_proof_not_passes() {
-        use bitvec::view::AsBits;
-        use crate::BitVec;
         use crate::id::BasicIdBuilder;
+        use crate::BitVec;
+        use bitvec::view::AsBits;
 
         let base_path = tempfile::tempdir().unwrap().path().to_path_buf();
         let base_db = create_rocks_db(&base_path).unwrap();
-        
+
         let identifier = vec![1];
-    
+
         let config = BonsaiStorageConfig::default();
-        
+
         let mut base_tree: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
             BonsaiStorage::new(
                 RocksDB::new(&base_db, RocksDBConfig::default()),
                 config.clone(),
                 251,
             );
-    
+
         let mut id_builder = BasicIdBuilder::new();
 
-        let key_1: BitVec = Felt::from_hex("0x7dc7899aa655b0aae51eadff6d801a58e97dd99cf4666ee59e704249e51adf2")
-        .unwrap()
-        .to_bytes_be()
-        .as_bits()[5..]
-        .to_owned();
-    
-        let key_2 = Felt::from_hex("0x70388df3dbdff1dac1f867fd5e418893daf4db7a44dea33824f66c924625358")
-        .unwrap()
-        .to_bytes_be()
-        .as_bits()[5..]
-        .to_owned();
-    
+        let key_1: BitVec =
+            Felt::from_hex("0x7dc7899aa655b0aae51eadff6d801a58e97dd99cf4666ee59e704249e51adf2")
+                .unwrap()
+                .to_bytes_be()
+                .as_bits()[5..]
+                .to_owned();
+
+        let key_2 =
+            Felt::from_hex("0x70388df3dbdff1dac1f867fd5e418893daf4db7a44dea33824f66c924625358")
+                .unwrap()
+                .to_bytes_be()
+                .as_bits()[5..]
+                .to_owned();
+
         let fork_keys: Vec<BitVec> = vec![
             "0x37ced5be9b4c84415d796cdd2ccf841fc83dc56b27c9e1b5d2ff018ed925bb8",
             "0x718254e2758595671ae17a81506b88489ed5ab6ea4664cd36fcb2b14e970831",
-        ].iter()
-            .map(|h| Felt::from_hex(h).unwrap().to_bytes_be().as_bits()[5..].to_owned())
-            .collect();
+        ]
+        .iter()
+        .map(|h| Felt::from_hex(h).unwrap().to_bytes_be().as_bits()[5..].to_owned())
+        .collect();
 
-        base_tree.insert(&identifier, &key_1, &Felt::from_hex("0x1").unwrap()).unwrap();
+        base_tree
+            .insert(&identifier, &key_1, &Felt::from_hex("0x1").unwrap())
+            .unwrap();
         base_tree.commit(id_builder.new_id()).unwrap();
 
-        base_tree.insert(&identifier, &key_2, &Felt::from(1)).unwrap();
+        base_tree
+            .insert(&identifier, &key_2, &Felt::from(1))
+            .unwrap();
         base_tree.commit(id_builder.new_id()).unwrap();
-    
-        let tree1 = base_tree.tries.trees.get_mut(&smallvec::smallvec![1]).unwrap();
-        let proof = tree1.get_multi_proof(&base_tree.tries.db, &fork_keys).unwrap();
+
+        let tree1 = base_tree
+            .tries
+            .trees
+            .get_mut(&smallvec::smallvec![1])
+            .unwrap();
+        let proof = tree1
+            .get_multi_proof(&base_tree.tries.db, &fork_keys)
+            .unwrap();
         println!("Proof: {:?}", proof);
 
         let verified_values = proof
             .verify_proof::<Pedersen>(
                 tree1.root_hash(&base_tree.tries.db).unwrap(),
                 fork_keys.iter(),
-                251
+                251,
             )
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -350,61 +363,74 @@ mod tests {
 
     #[test]
     fn test_get_multi_proof_passes() {
-        use bitvec::view::AsBits;
-        use crate::BitVec;
         use crate::id::BasicIdBuilder;
+        use crate::BitVec;
+        use bitvec::view::AsBits;
 
         let base_path = tempfile::tempdir().unwrap().path().to_path_buf();
         let base_db = create_rocks_db(&base_path).unwrap();
-        
+
         let identifier = vec![1];
-    
+
         let config = BonsaiStorageConfig::default();
-        
+
         let mut base_tree: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
             BonsaiStorage::new(
                 RocksDB::new(&base_db, RocksDBConfig::default()),
                 config.clone(),
                 251,
             );
-    
+
         let mut id_builder = BasicIdBuilder::new();
 
-        let key_1: BitVec = Felt::from_hex("0x7dc7899aa655b0aae51eadff6d801a58e97dd99cf4666ee59e704249e51adf2")
-        .unwrap()
-        .to_bytes_be()
-        .as_bits()[5..]
-        .to_owned();
-    
-        let key_2 = Felt::from_hex("0x70388df3dbdff1dac1f867fd5e418893daf4db7a44dea33824f66c924625358")
-        .unwrap()
-        .to_bytes_be()
-        .as_bits()[5..]
-        .to_owned();
-    
+        let key_1: BitVec =
+            Felt::from_hex("0x7dc7899aa655b0aae51eadff6d801a58e97dd99cf4666ee59e704249e51adf2")
+                .unwrap()
+                .to_bytes_be()
+                .as_bits()[5..]
+                .to_owned();
+
+        let key_2 =
+            Felt::from_hex("0x70388df3dbdff1dac1f867fd5e418893daf4db7a44dea33824f66c924625358")
+                .unwrap()
+                .to_bytes_be()
+                .as_bits()[5..]
+                .to_owned();
+
         let fork_keys: Vec<BitVec> = vec![
             "0x718254e2758595671ae17a81506b88489ed5ab6ea4664cd36fcb2b14e970831",
             "0x37ced5be9b4c84415d796cdd2ccf841fc83dc56b27c9e1b5d2ff018ed925bb8",
             "0x140d99b5f8493f04b1f1eb09734048e2860352cc76cd57f9b2e2a4deafbc9c0",
-        ].iter()
-            .map(|h| Felt::from_hex(h).unwrap().to_bytes_be().as_bits()[5..].to_owned())
-            .collect();
+        ]
+        .iter()
+        .map(|h| Felt::from_hex(h).unwrap().to_bytes_be().as_bits()[5..].to_owned())
+        .collect();
 
-        base_tree.insert(&identifier, &key_1, &Felt::from_hex("0x1").unwrap()).unwrap();
+        base_tree
+            .insert(&identifier, &key_1, &Felt::from_hex("0x1").unwrap())
+            .unwrap();
         base_tree.commit(id_builder.new_id()).unwrap();
 
-        base_tree.insert(&identifier, &key_2, &Felt::from(1)).unwrap();
+        base_tree
+            .insert(&identifier, &key_2, &Felt::from(1))
+            .unwrap();
         base_tree.commit(id_builder.new_id()).unwrap();
-    
-        let tree1 = base_tree.tries.trees.get_mut(&smallvec::smallvec![1]).unwrap();
-        let proof = tree1.get_multi_proof(&base_tree.tries.db, &fork_keys).unwrap();
+
+        let tree1 = base_tree
+            .tries
+            .trees
+            .get_mut(&smallvec::smallvec![1])
+            .unwrap();
+        let proof = tree1
+            .get_multi_proof(&base_tree.tries.db, &fork_keys)
+            .unwrap();
         println!("Proof: {:?}", proof);
 
         let verified_values = proof
             .verify_proof::<Pedersen>(
                 tree1.root_hash(&base_tree.tries.db).unwrap(),
                 fork_keys.iter(),
-                251
+                251,
             )
             .collect::<Result<Vec<_>, _>>()
             .unwrap();

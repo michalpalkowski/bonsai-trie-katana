@@ -338,7 +338,6 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeTrave
             next_to_visit = self.traverse_one(node_id, self.current_path.len(), key)?;
             visitor.visit_node::<DB>(self.tree, node_id, self.current_path.len())?;
 
-
             log::trace!(
                 "Got nodeid={:?} height={}, cur path={:?}, next to visit={:?}",
                 node_id,
@@ -371,6 +370,14 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
                     self.current_path,
                     key,
                 );
+                // CRITICAL: Check if we can access the next bit before trying to index into key
+                // This prevents index out of bounds when current_path.len() >= key.len()
+                if self.current_path.len() >= key.len() {
+                    // We've reached the end of the key at a binary node
+                    // This means the key doesn't have a definitive leaf value
+                    self.leaf_hash = None;
+                    return Ok(None);
+                }
                 let next_direction = Direction::from(key[self.current_path.len()]);
                 self.current_path.push(bool::from(next_direction));
                 (*binary_node.get_child_mut(next_direction), true)
@@ -494,11 +501,15 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
         let mut next_to_visit =
             if let Some((node_id, height)) = self.current_partial_nodes_heights.pop() {
                 self.current_path.truncate(height);
-                // visitor.visit_partial_node::<DB>(self.tree, node_id, height)?;
+                visitor.visit_partial_node::<DB>(self.tree, node_id, height)?;
                 self.traverse_one(node_id, height, key)?
             } else {
                 let root_node_id = match self.tree.load_root_node(self.db)? {
-                    Some(root_node_id) => Some(root_node_id),
+                    Some(root_node_id) => {
+                        // Root node exists in database - visit it
+                        visitor.visit_partial_node::<DB>(self.tree, root_node_id, 0)?;
+                        Some(root_node_id)
+                    }
                     None => {
                         // empty tree, not found
                         // Start from tree root.
@@ -532,6 +543,8 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
                         let root_node_id = self.tree.nodes.insert(partial_root_node);
                         self.tree.root_node = Some(RootHandle::Loaded(root_node_id));
                         println!("Root node id: {:?}", root_node_id);
+                        // Visit the root node loaded from proof
+                        visitor.visit_partial_node::<DB>(self.tree, root_node_id, 0)?;
                         Some(root_node_id)
                     }
                 };
@@ -552,11 +565,12 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
                 return Ok(());
             };
 
-            next_to_visit = self.traverse_one(node_id, self.current_path.len(), key)?;
-
-            // if let Some(next_id) = next_to_visit {
-            //     visitor.visit_partial_node::<DB>(self.tree, next_id, self.current_path.len())?;
-            // }
+            // CRITICAL: Save height BEFORE traverse_one modifies current_path!
+            // traverse_one extends current_path, so we must save the height at the BASE of this node
+            let height_at_node_base = self.current_path.len();
+            next_to_visit = self.traverse_one(node_id, height_at_node_base, key)?;
+            // Visit the node we just traversed, using its base height (not the extended path length)
+            visitor.visit_partial_node::<DB>(self.tree, node_id, height_at_node_base)?;
 
             log::trace!(
                 "Got nodeid={:?} height={}, cur path={:?}, next to visit={:?}",

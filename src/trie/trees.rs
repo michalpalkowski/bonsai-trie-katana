@@ -142,6 +142,18 @@ impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id> ProofCapable<
     }
 }
 
+impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id> ProofCapable<H, DB, CommitID>
+    for PartialTrie<H>
+{
+    fn get_multi_proof(
+        &mut self,
+        db: &KeyValueDB<DB, CommitID>,
+        keys: impl IntoIterator<Item = impl AsRef<BitSlice>>,
+    ) -> Result<MultiProof, BonsaiStorageError<DB::DatabaseError>> {
+        self.get_multi_proof(db, keys)
+    }
+}
+
 impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id> TreeOperations<H, DB, CommitID>
     for PartialTrie<H>
 {
@@ -477,5 +489,18 @@ impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id>
             .or_insert_with(|| PartialTrie::new(identifier.into(), self.max_height));
 
         tree.set_with_proof(&mut self.db, key, value, proof, original_root)
+    }
+
+    pub fn get_multi_proof(
+        &mut self,
+        identifier: &[u8],
+        keys: impl IntoIterator<Item = impl AsRef<BitSlice>>,
+    ) -> Result<MultiProof, BonsaiStorageError<DB::DatabaseError>> {
+        let tree = self
+            .trees
+            .entry_ref(identifier)
+            .or_insert_with(|| PartialTrie::new(identifier.into(), self.max_height));
+
+        tree.get_multi_proof(&self.db, keys)
     }
 }
