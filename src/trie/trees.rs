@@ -491,16 +491,18 @@ impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id>
         tree.set_with_proof(&mut self.db, key, value, proof, original_root)
     }
 
-    pub fn get_multi_proof(
+    pub fn get_multi_proof_partial_trie(
         &mut self,
         identifier: &[u8],
         keys: impl IntoIterator<Item = impl AsRef<BitSlice>>,
+        original_proof: Option<MultiProof>,
+        original_root: Option<Felt>,
     ) -> Result<MultiProof, BonsaiStorageError<DB::DatabaseError>> {
         let tree = self
             .trees
             .entry_ref(identifier)
             .or_insert_with(|| PartialTrie::new(identifier.into(), self.max_height));
 
-        tree.get_multi_proof(&self.db, keys)
+        tree.get_multi_proof_partial_trie(&self.db, keys, original_proof, original_root)
     }
 }

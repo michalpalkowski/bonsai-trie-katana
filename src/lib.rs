@@ -630,4 +630,15 @@ impl<ChangeID: Id, DB: BonsaiDatabase, H: StarkHash + Send + Sync>
         self.tries.db_mut().create_snapshot(id);
         Ok(())
     }
+
+    pub fn get_multi_proof(
+        &mut self,
+        identifier: &[u8],
+        keys: impl IntoIterator<Item = impl AsRef<BitSlice>>,
+        original_proof: Option<MultiProof>,
+        original_root: Option<Felt>,
+    ) -> Result<MultiProof, BonsaiStorageError<DB::DatabaseError>> {
+        self.tries
+            .get_multi_proof_partial_trie(identifier, keys, original_proof, original_root)
+    }
 }

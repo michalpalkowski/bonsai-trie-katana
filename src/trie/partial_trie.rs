@@ -131,13 +131,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         self.trie.commit::<DB, ID>(db)
     }
 
-    /// Generates a multi-proof for the given keys.
-    /// This is a specialized version for PartialTrie that can handle partial trees
-    /// by loading missing nodes from the database.
-    ///
-    /// Unlike the standard `get_multi_proof` in MerkleTree, this version uses
-    /// `iter_partial_trie` which can load nodes from the database even if they're
-    /// not in memory, making it suitable for partial tries.
     pub fn get_multi_proof<DB: BonsaiDatabase, ID: Id>(
         &mut self,
         db: &KeyValueDB<DB, ID>,
@@ -149,15 +142,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
     /// Generates a multi-proof for the given keys, optionally using proof from the original tree
     /// to fill missing nodes. This allows generating complete proofs for forks that don't have
     /// all nodes in the database.
-    ///
-    /// # Arguments
-    ///
-    /// * `db` - Database to load nodes from
-    /// * `keys` - Keys to generate proof for
-    /// * `original_proof` - Optional proof from the original tree. If provided, missing nodes
-    ///   will be loaded from this proof, allowing generation of complete proofs for forks
-    ///   that don't have all nodes in the database.
-    /// * `original_root` - Root hash of the original tree (required if `original_proof` is provided)
     /// TODO: THIS IMPLEMENTATION IS NOT READY, IT DOES NOT PASS TESTS
     /// IT DOES NOT WORK WHEN GENERATING MIXED PROOFS (SOME VALUES EXIST IN FULL AND OTHERS IN PARTIAL TRIE)
     pub fn get_multi_proof_partial_trie<DB: BonsaiDatabase, ID: Id>(
