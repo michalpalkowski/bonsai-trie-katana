@@ -100,11 +100,7 @@ pub(crate) use alloc::{
     vec,
     vec::Vec,
 };
-use core::{
-    fmt,
-    marker::PhantomData,
-    ops::{Deref, DerefMut},
-};
+use core::{fmt, marker::PhantomData};
 use id::Id;
 #[cfg(feature = "std")]
 pub(crate) use std::{
@@ -134,6 +130,7 @@ pub use bonsai_database::{BonsaiDatabase, BonsaiPersistentDatabase, DBError, Dat
 pub use error::BonsaiStorageError;
 pub use trie::path::Path;
 pub use trie::proof::{MultiProof, ProofNode};
+pub use trie::trees::{FullMerkleTrees, PartialMerkleTrees};
 
 #[cfg(test)]
 mod tests;
@@ -157,11 +154,7 @@ impl<T: parity_scale_codec::Encode> EncodeExt for T {}
 
 use key_value_db::KeyValueDB;
 use starknet_types_core::{felt::Felt, hash::StarkHash};
-use trie::{
-    partial_trie::PartialTrie,
-    tree::bytes_to_bitvec,
-    trees::{MerkleTrees, PartialMerkleTrees},
-};
+use trie::{partial_trie::PartialTrie, tree::bytes_to_bitvec, trees::MerkleTrees};
 
 /// Structure that contains the configuration for the BonsaiStorage.
 /// A default implementation is provided with coherent values.

@@ -179,6 +179,9 @@ pub struct MerkleTrees<
     _phantom: core::marker::PhantomData<(H, DB, CommitID)>,
 }
 
+/// Type alias for full merkle trie storage (default).
+pub type FullMerkleTrees<H, DB, CommitID> = MerkleTrees<H, DB, CommitID, MerkleTree<H>>;
+
 /// Type alias for partial trie storage used in forked state scenarios.
 pub type PartialMerkleTrees<H, DB, CommitID> = MerkleTrees<H, DB, CommitID, PartialTrie<H>>;
 
