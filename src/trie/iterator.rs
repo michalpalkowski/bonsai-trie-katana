@@ -556,8 +556,8 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
                 return Ok(());
             };
 
-            visitor.visit_partial_node::<DB>(self.tree, node_id, self.current_path.len())?;
             next_to_visit = self.traverse_one(node_id, self.current_path.len(), key)?;
+            visitor.visit_partial_node::<DB>(self.tree, node_id, self.current_path.len())?;
 
             log::trace!(
                 "Got nodeid={:?} height={}, cur path={:?}, next to visit={:?}",
