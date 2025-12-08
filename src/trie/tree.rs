@@ -664,7 +664,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
         match path_nodes.last() {
             Some((node_id, _)) => {
                 let mut node = self.get_node_mut::<DB>(*node_id)?.clone();
-                // println!("PATH NODES LAST NODE{:?}", node);
                 match &mut node {
                     Edge(edge) => {
                         let common = edge.common_path(key);

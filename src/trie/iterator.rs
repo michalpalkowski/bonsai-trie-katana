@@ -50,8 +50,6 @@ impl<H: StarkHash> NodeVisitor<H> for NoopVisitor<H> {
     }
 }
 
-//TODO: consider removing/implementing this trait
-/// Trait for handling partial node visits during seek operations
 pub trait PartialNodeVisitor<H: StarkHash> {
     fn visit_partial_node<DB: BonsaiDatabase>(
         &mut self,
@@ -335,8 +333,8 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeTrave
                 return Ok(());
             };
 
-            next_to_visit = self.traverse_one(node_id, self.current_path.len(), key)?;
             visitor.visit_node::<DB>(self.tree, node_id, self.current_path.len())?;
+            next_to_visit = self.traverse_one(node_id, self.current_path.len(), key)?;
 
             log::trace!(
                 "Got nodeid={:?} height={}, cur path={:?}, next to visit={:?}",
@@ -560,8 +558,8 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
                 return Ok(());
             };
 
-            next_to_visit = self.traverse_one(node_id, self.current_path.len(), key)?;
             visitor.visit_partial_node::<DB>(self.tree, node_id, self.current_path.len())?;
+            next_to_visit = self.traverse_one(node_id, self.current_path.len(), key)?;
 
             log::trace!(
                 "Got nodeid={:?} height={}, cur path={:?}, next to visit={:?}",

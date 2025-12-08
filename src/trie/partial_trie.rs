@@ -10,7 +10,7 @@ use crate::BitVec;
 use crate::DBError;
 use crate::MultiProof;
 use crate::{
-    error::BonsaiStorageError, id::Id, vec, BitSlice, BonsaiDatabase, ByteVec, HashMap, KeyValueDB,
+    error::BonsaiStorageError, id::Id, vec, BitSlice, BonsaiDatabase, ByteVec, KeyValueDB,
     ToString, Vec,
 };
 use core::marker::PhantomData;
@@ -72,13 +72,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         proof: MultiProof,
         original_root: Felt,
     ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
-        // if value == Felt::ZERO {
-        //     return Err(PartialTrieError::SetValueZero.into());
-        // }
-        // println!("PROOF to set partial trie: {:?}", proof);
-
-        let path_nodes = self.seek_to(&key, proof, original_root, db)?;
-        // println!("PATH NODES for set with proof: {:?}", path_nodes);
+        let path_nodes = self.seek_to(key, proof, original_root, db)?;
 
         self.trie.set(db, key, value, Some(path_nodes))?;
 
@@ -86,7 +80,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
     }
 
     /// Traverses the current partial tree and collects existing elements.
-    /// If an element is missing, selects it from the proof.
     /// If the tree is empty, completes it from the proof.
     pub fn seek_to<DB: BonsaiDatabase, ID: Id>(
         &mut self,
@@ -142,8 +135,6 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
     /// Generates a multi-proof for the given keys, optionally using proof from the original tree
     /// to fill missing nodes. This allows generating complete proofs for forks that don't have
     /// all nodes in the database.
-    /// **IMPORTANT**: The `original_proof` parameter (if provided) MUST contain proofs for
-    /// the EXACT SAME keys that are passed in the `keys` parameter. This is because:
     pub fn get_multi_proof_partial_trie<DB: BonsaiDatabase, ID: Id>(
         &mut self,
         db: &KeyValueDB<DB, ID>,
@@ -213,18 +204,13 @@ mod tests {
     use crate::{
         databases::{create_rocks_db, RocksDB, RocksDBConfig},
         id::{BasicId, BasicIdBuilder},
-        BonsaiStorage, BonsaiStorageConfig, MerkleTrees, PartialMerkleTrees,
+        BonsaiStorage, BonsaiStorageConfig, PartialMerkleTrees,
     };
     use bitvec::{bits, prelude::Msb0};
     use proptest::collection::vec;
     use proptest::num::u8;
     use proptest::prelude::*;
     use starknet_types_core::hash::Pedersen;
-
-    fn arb_key(max_height: u8) -> impl Strategy<Value = BitVec> {
-        prop::collection::vec(any::<bool>(), max_height as usize)
-            .prop_map(|bits| bits.into_iter().collect())
-    }
 
     fn arb_key_value(max_height: u8) -> impl Strategy<Value = (BitVec, Felt)> {
         (
@@ -244,33 +230,11 @@ mod tests {
             })
     }
 
-    fn arb_value() -> impl Strategy<Value = Felt> {
-        u8::ANY.prop_map(|v| Felt::from(v as u64 + 100))
-    }
-
     fn arb_power_of_two_keys(max_height: u8) -> impl Strategy<Value = Vec<(BitVec, Felt)>> {
         (0..4).prop_flat_map(move |power| {
             let num_keys = 1 << power;
             prop::collection::vec(arb_key_value(max_height), num_keys as usize)
         })
-    }
-
-    //TODO: DECIDE WHAT TO DO WITH THIS
-    fn select_random_key_value_from_initial_keys(
-        initial_keys_values: Vec<(BitVec, Felt)>,
-    ) -> (BitVec, Felt, Vec<(BitVec, Felt)>) {
-        assert!(!initial_keys_values.is_empty(), "empty key/value set");
-        let random_index = rand::random::<usize>() % initial_keys_values.len();
-        let (removed_key, removed_value) = initial_keys_values[random_index].clone();
-
-        let remaining_keys_values: Vec<(BitVec, Felt)> = initial_keys_values
-            .into_iter()
-            .enumerate()
-            .filter(|(i, _)| *i != random_index)
-            .map(|(_, kv)| kv)
-            .collect();
-
-        (removed_key, removed_value, remaining_keys_values)
     }
 
     #[test]
@@ -356,19 +320,14 @@ mod tests {
         ];
 
         for (key, value) in keys.iter().zip(values.iter()).take(3) {
-            println!("Inserting key: {:?}", key);
-            println!("Inserting value: {:?}", value);
             base_tree.insert(&identifier, key, value).unwrap();
-            reference_tree.insert(&identifier3, key, value).unwrap(); // thats a referencje tree
+            reference_tree.insert(&identifier3, key, value).unwrap(); // Reference tree for comparison
         }
 
         base_tree.commit(id_builder.new_id()).unwrap();
         let original_root = base_tree.root_hash(&identifier).unwrap();
-        println!("Original root: {:?}", original_root);
 
-        let mut partial_trie = PartialTrie::<Pedersen>::new(identifier4.clone().into(), 8);
         let mut calculated_roots: Vec<Felt> = Vec::new();
-        let mut i = 0;
         let mut current_root = original_root;
 
         let tree1 = base_tree
@@ -381,46 +340,14 @@ mod tests {
         let proof_for_one = tree1
             .get_multi_proof(&base_tree.tries.db, proof_key_one.iter())
             .unwrap();
-        println!("Proof for one: {:?}", proof_for_one);
 
         for (key, value) in keys.iter().zip(values.iter()).skip(3) {
-            i += 1;
-            println!("ITERATION: {:?}", i);
-
             let proof_keys = vec![key];
-
             let proof = tree1
                 .get_multi_proof(&base_tree.tries.db, proof_keys.iter())
                 .unwrap();
 
-            println!("---------PROOF-------");
-            println!("{:?}\n", proof);
-            // let proof_root = proof.0.first().unwrap().0;
-            // let proof_root_clone = proof.clone();
-
-            // println!("\ntree: {:?}\n", bonsai_storage1.tries.trees.entry(smallvec::smallvec![1]));
             reference_tree.insert(&identifier3, key, value).unwrap();
-            println!(
-                "\nTree NODES: {:?}\n",
-                reference_tree
-                    .tries
-                    .trees
-                    .get(&smallvec::smallvec![3])
-                    .unwrap()
-                    .nodes
-                    .iter()
-                    .map(|(k, v)| (k, v))
-                    .collect::<HashMap<_, _>>()
-            );
-            println!(
-                "\nPartialTree NODES before adding new key-value pair: {:?}\n",
-                partial_trie
-                    .trie
-                    .nodes
-                    .iter()
-                    .map(|(k, v)| (k, v))
-                    .collect::<HashMap<_, _>>()
-            );
             reference_tree.commit(id_builder.new_id()).unwrap();
 
             fork_tree
@@ -438,10 +365,6 @@ mod tests {
         }
 
         tree_to_compare.commit(id_builder.new_id()).unwrap();
-        let proof_keys = vec![keys.last().unwrap()];
-        let proof = tree1
-            .get_multi_proof(&tree_to_compare.tries.db, proof_keys.iter())
-            .unwrap();
 
         let actual_root = tree_to_compare.root_hash(&identifier2).unwrap();
         assert_eq!(current_root, actual_root, "Next root calculation failed");
@@ -584,8 +507,6 @@ mod tests {
 
         let original_root = base_bonsai_storage.root_hash(&base_identifier).unwrap();
 
-        let mut partial_trie = PartialTrie::<Pedersen>::new(fork_identifier.clone().into(), height);
-
         let mut calculated_roots = Vec::new();
 
         let tree1 = base_bonsai_storage
@@ -602,27 +523,11 @@ mod tests {
                 .get_multi_proof(&base_bonsai_storage.tries.db, proof_keys.iter())
                 .unwrap();
 
-            // let proof_root = proof.0.first().unwrap().0;
-            // let proof_clone = proof.clone();
-
-            println!("\nITERATION: {:?}\n", i);
-            println!("\nProof: {:?}\n", proof);
-
             forked_bonsai_storage
                 .insert_with_proof(&fork_identifier, key, value, proof, original_root)
                 .unwrap();
             forked_bonsai_storage.commit(id_builder.new_id()).unwrap();
             let fork_hash = forked_bonsai_storage.root_hash(&fork_identifier).unwrap();
-
-            println!(
-                "\nPartialTree NODES after adding new key-value pair: {:?}\n",
-                partial_trie
-                    .trie
-                    .nodes
-                    .iter()
-                    .map(|(k, v)| (k, v))
-                    .collect::<HashMap<_, _>>()
-            );
 
             calculated_roots.push(fork_hash);
         }
@@ -729,19 +634,14 @@ mod tests {
         ];
 
         for (key, value) in keys.iter().zip(values.iter()).take(3) {
-            println!("Inserting key: {:?}", key);
-            println!("Inserting value: {:?}", value);
             base_tree.insert(&identifier, key, value).unwrap();
-            reference_tree.insert(&identifier3, key, value).unwrap(); // thats a referencje tree
-                                                                      // println!("bonsai trie: {:?}", bonsai_storage1.tries.trees.entry(smallvec::smallvec![1]).unwrap().proof_nodes);
+            reference_tree.insert(&identifier3, key, value).unwrap(); // Reference tree for comparison
         }
 
         base_tree.commit(id_builder.new_id()).unwrap();
         let original_root = base_tree.root_hash(&identifier).unwrap();
-        println!("Original root: {:?}", original_root);
 
         let mut calculated_roots: Vec<Felt> = Vec::new();
-        let mut i = 0;
 
         let tree1 = base_tree
             .tries
@@ -753,14 +653,10 @@ mod tests {
         let proof_for_one = tree1
             .get_multi_proof(&base_tree.tries.db, proof_key_one.iter())
             .unwrap();
-        println!("Proof for one: {:?}", proof_for_one);
 
         let mut current_root = original_root;
 
         for (key, value) in keys.iter().zip(values.iter()).skip(3) {
-            i += 1;
-            println!("ITERATION: {:?}", i);
-
             let proof_keys = vec![key];
 
             let proof = tree1
@@ -785,10 +681,6 @@ mod tests {
         }
 
         tree_to_compare.commit(id_builder.new_id()).unwrap();
-        let proof_keys = vec![keys.last().unwrap()];
-        let proof = tree1
-            .get_multi_proof(&tree_to_compare.tries.db, proof_keys.iter())
-            .unwrap();
 
         let actual_root = tree_to_compare.root_hash(&identifier2).unwrap();
         assert_eq!(current_root, actual_root, "Next root calculation failed");
@@ -817,7 +709,7 @@ mod tests {
         );
     }
     #[test]
-    fn test_bonsai_partial_trie_realistic() {
+    fn test_insert_with_proof_multi_proof_with_mainnet_keys() {
         use bitvec::view::AsBits;
         let base_path = tempfile::tempdir().unwrap().path().to_path_buf();
         let base_db = create_rocks_db(&base_path).unwrap();
@@ -856,7 +748,6 @@ mod tests {
                 .to_bytes_be()
                 .as_bits()[5..]
                 .to_owned();
-        println!("MAINNET GENESIS KEY 0x7dc7899aa655b0aae51eadff6d801a58e97dd99cf4666ee59e704249e51adf2: {:?}", mainnet_genesis_key);
 
         let mainnet_key =
             Felt::from_hex("0x70388df3dbdff1dac1f867fd5e418893daf4db7a44dea33824f66c924625358")
@@ -864,34 +755,6 @@ mod tests {
                 .to_bytes_be()
                 .as_bits()[5..]
                 .to_owned();
-
-        println!(
-            "MAINNET KEY 0x70388df3dbdff1dac1f867fd5e418893daf4db7a44dea33824f66c924625358: {:?}",
-            mainnet_key
-        );
-
-        let fork_key1: BitVec =
-            Felt::from_hex("0x37ced5be9b4c84415d796cdd2ccf841fc83dc56b27c9e1b5d2ff018ed925bb8")
-                .unwrap()
-                .to_bytes_be()
-                .as_bits()[5..]
-                .to_owned();
-        println!(
-            "FORK KEY 0x37ced5be9b4c84415d796cdd2ccf841fc83dc56b27c9e1b5d2ff018ed925bb8 : {:?}",
-            fork_key1
-        );
-
-        let fork_key2: BitVec =
-            Felt::from_hex("0x718254e2758595671ae17a81506b88489ed5ab6ea4664cd36fcb2b14e970831")
-                .unwrap()
-                .to_bytes_be()
-                .as_bits()[5..]
-                .to_owned();
-
-        println!(
-            "FORK KEY 0x718254e2758595671ae17a81506b88489ed5ab6ea4664cd36fcb2b14e970831: {:?}",
-            fork_key2
-        );
 
         let fork_keys: Vec<BitVec> = vec![
             "0x718254e2758595671ae17a81506b88489ed5ab6ea4664cd36fcb2b14e970831",
@@ -927,9 +790,8 @@ mod tests {
         let proof = tree1
             .get_multi_proof(&base_tree.tries.db, &fork_keys)
             .unwrap();
-        println!("Proof: {:?}", proof);
 
-        let verified_values = proof
+        let _verified_values = proof
             .verify_proof::<Pedersen>(
                 tree1.root_hash(&base_tree.tries.db).unwrap(),
                 fork_keys.iter(),
@@ -937,7 +799,6 @@ mod tests {
             )
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        println!("Verified values: {:?}", verified_values);
 
         for (i, key) in fork_keys.iter().enumerate() {
             println!("Inserting hash {}: {:?}", i + 1, key);
@@ -955,7 +816,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bonsai_partial_trie_realistic_sequential() {
+    fn test_insert_with_proof_separate_proofs_with_mainnet_keys() {
         use bitvec::view::AsBits;
         let base_path = tempfile::tempdir().unwrap().path().to_path_buf();
         let base_db = create_rocks_db(&base_path).unwrap();
@@ -994,7 +855,6 @@ mod tests {
                 .to_bytes_be()
                 .as_bits()[5..]
                 .to_owned();
-        println!("MAINNET GENESIS KEY 0x7dc7899aa655b0aae51eadff6d801a58e97dd99cf4666ee59e704249e51adf2: {:?}", mainnet_genesis_key);
 
         let mainnet_key =
             Felt::from_hex("0x70388df3dbdff1dac1f867fd5e418893daf4db7a44dea33824f66c924625358")
@@ -1002,34 +862,6 @@ mod tests {
                 .to_bytes_be()
                 .as_bits()[5..]
                 .to_owned();
-
-        println!(
-            "MAINNET KEY 0x70388df3dbdff1dac1f867fd5e418893daf4db7a44dea33824f66c924625358: {:?}",
-            mainnet_key
-        );
-
-        let fork_key1: BitVec =
-            Felt::from_hex("0x37ced5be9b4c84415d796cdd2ccf841fc83dc56b27c9e1b5d2ff018ed925bb8")
-                .unwrap()
-                .to_bytes_be()
-                .as_bits()[5..]
-                .to_owned();
-        println!(
-            "FORK KEY 0x37ced5be9b4c84415d796cdd2ccf841fc83dc56b27c9e1b5d2ff018ed925bb8 : {:?}",
-            fork_key1
-        );
-
-        let fork_key2: BitVec =
-            Felt::from_hex("0x718254e2758595671ae17a81506b88489ed5ab6ea4664cd36fcb2b14e970831")
-                .unwrap()
-                .to_bytes_be()
-                .as_bits()[5..]
-                .to_owned();
-
-        println!(
-            "FORK KEY 0x718254e2758595671ae17a81506b88489ed5ab6ea4664cd36fcb2b14e970831: {:?}",
-            fork_key2
-        );
 
         let fork_keys: Vec<BitVec> = vec![
             "0x37ced5be9b4c84415d796cdd2ccf841fc83dc56b27c9e1b5d2ff018ed925bb8",
@@ -1039,7 +871,6 @@ mod tests {
         .map(|h| Felt::from_hex(h).unwrap().to_bytes_be().as_bits()[5..].to_owned())
         .collect();
 
-        // Wstawiamy TYLKO jeden hash do base_tree (jak w mainnet)
         base_tree
             .insert(
                 &identifier,
@@ -1058,7 +889,6 @@ mod tests {
         base_tree.commit(id_builder.new_id()).unwrap();
         let original_root = base_tree.root_hash(&identifier).unwrap();
 
-        // Pobieramy proof z drzewa które ma tylko jeden węzeł
         let tree1 = base_tree
             .tries
             .trees
@@ -1067,12 +897,10 @@ mod tests {
         let proof = tree1
             .get_multi_proof(&base_tree.tries.db, vec![&fork_keys[0]])
             .unwrap();
-        println!("Proof: {:?}", proof);
 
         let proof2 = tree1
             .get_multi_proof(&base_tree.tries.db, vec![&fork_keys[1]])
             .unwrap();
-        println!("Proof: {:?}", proof2);
 
         fork_tree
             .insert_with_proof(
@@ -1153,7 +981,6 @@ mod tests {
             .unwrap();
         base_tree.commit(id_builder.new_id()).unwrap();
 
-        // Pobieramy proof z drzewa które ma tylko jeden węzeł
         let tree1 = base_tree
             .tries
             .trees
@@ -1162,7 +989,6 @@ mod tests {
         let proof = tree1
             .get_multi_proof(&base_tree.tries.db, &fork_keys)
             .unwrap();
-        println!("Proof: {:?}", proof);
 
         // Verify proof before using
         let verified_values = proof
@@ -1177,9 +1003,8 @@ mod tests {
     }
 
     #[test]
-    fn test_bonsai_partial_trie_realistic_state_updates() {
+    fn test_insert_with_proof_multi_proof_with_mainnet_keys_state_updates() {
         use bitvec::view::AsBits;
-        use std::collections::BTreeMap;
 
         let base_path = tempfile::tempdir().unwrap().path().to_path_buf();
         let base_db = create_rocks_db(&base_path).unwrap();
@@ -1212,7 +1037,6 @@ mod tests {
         );
         let mut id_builder = BasicIdBuilder::new();
 
-        // Przygotuj storage_updates: Vec<(address, Vec<(storage_key, value)>)>
         let storage_updates: Vec<(Felt, Vec<(Felt, Felt)>)> = vec![
             (
                 Felt::from_hex("0x1379ac0624b939ceb9dede92211d7db5ee174fe28be72245b0a1a2abd81c98f")
@@ -1540,9 +1364,7 @@ mod tests {
             ),
         ];
 
-        // Dla każdego kontraktu: osobne storage tree, commit, root do outer_tree
         for (address, storage_pairs) in &storage_updates {
-            // Nowe storage tree dla kontraktu
             let mut storage_tree: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
                 BonsaiStorage::new(
                     RocksDB::new(&base_db, RocksDBConfig::default()),
@@ -1550,7 +1372,6 @@ mod tests {
                     251,
                 );
 
-            // Wstaw wszystkie pary (storage_key, value) dla tego adresu
             for (storage_key, value) in storage_pairs {
                 let key_bits = storage_key.to_bytes_be().as_bits()[5..].to_owned();
                 storage_tree.insert(&identifier, &key_bits, value).unwrap();
@@ -1576,7 +1397,6 @@ mod tests {
             .unwrap();
         outer_tree.commit(id_builder.new_id()).unwrap();
 
-        // Fork keys - adresy kontraktów bez storage
         let fork_keys: Vec<BitVec> = vec![
             "0x3d2d7cf3e9a59d09ed30e4812ab0d0cbd8cda5bdaa14a1bf5abe3ce6536ea7c",
             "0x246258999ea81791cf6e6873e9cffb15c27c4e96b99558d78ff7e3c177d73c8",
@@ -1586,7 +1406,6 @@ mod tests {
         .map(|h| Felt::from_hex(h).unwrap().to_bytes_be().as_bits()[5..].to_owned())
         .collect();
 
-        // Get proof for fork keys
         let tree1 = outer_tree
             .tries
             .trees
@@ -1597,7 +1416,6 @@ mod tests {
             .unwrap();
         println!("Proof: {:?}", proof);
 
-        // Verify proof before using
         let verified_values = proof
             .verify_proof::<Pedersen>(
                 tree1.root_hash(&outer_tree.tries.db).unwrap(),
@@ -1608,11 +1426,7 @@ mod tests {
             .unwrap();
         println!("Verified values: {:?}", verified_values);
 
-        // Symuluj dokładnie ten sam błąd - próbuj wstawić adresy z pustym storage
-        // To powinno spowodować błąd "old_path is too short"
         for (i, key) in fork_keys.iter().enumerate() {
-            println!("INSERTING LEAF HASH for address: {:?}", key);
-            // Próbuj wstawić z proof - to powinno spowodować błąd
             let result = fork_tree.insert_with_proof(
                 &identifier2,
                 key,
@@ -1627,7 +1441,6 @@ mod tests {
                 }
                 Err(e) => {
                     println!("Error inserting fork key {}: {:?}", i + 1, e);
-                    // To jest oczekiwany błąd - "old_path is too short"
                     panic!("Expected error occurred: {:?}", e);
                 }
             }
@@ -1635,7 +1448,7 @@ mod tests {
     }
 
     #[test]
-    fn test_partial_trie_get_multi_proof_with_original_proof() {
+    fn test_get_multi_proof_with_original_proof() {
         let _ = env_logger::builder().is_test(true).try_init();
         let base_path = tempfile::tempdir().unwrap().path().to_path_buf();
         let base_db = create_rocks_db(&base_path).unwrap();
@@ -1739,7 +1552,7 @@ mod tests {
     }
 
     #[test]
-    fn test_partial_trie_get_multi_proof_without_original_proof() {
+    fn test_get_multi_proof_without_original_proof() {
         let tempdir = tempfile::tempdir().unwrap();
         let db = create_rocks_db(tempdir.path()).unwrap();
         let mut bonsai_storage: BonsaiStorage<BasicId, _, Pedersen> = BonsaiStorage::new(
@@ -1794,22 +1607,8 @@ mod tests {
     }
 
     /// Test get_multi_proof on a partial fork with only some keys modified.
-    ///
-    /// Scenario:
-    /// - Base tree has keys A=1, B=2, C=3
-    /// - Fork modifies only key A=100
-    /// - Fork's database doesn't have B and C
-    /// - Generate proof for A, B, C in fork using original_proof
-    ///
-    /// Expected:
-    /// - A should have fork value (100) from fork database
-    /// - B should have original value (2) loaded from original_proof
-    /// - C should have original value (3) loaded from original_proof
-    ///
-    /// This tests the core functionality: generating complete proofs for forks
-    /// that don't have all nodes in their database, using original_proof to fill gaps.
     #[test]
-    fn test_partial_trie_get_multi_proof_fork_scenario() {
+    fn test_get_multi_proof_for_partial_fork() {
         let base_path = tempfile::tempdir().unwrap().path().to_path_buf();
         let base_db = create_rocks_db(&base_path).unwrap();
 
@@ -1920,7 +1719,7 @@ mod tests {
     }
 
     #[test]
-    fn test_partial_trie_get_multi_proof_caching() {
+    fn test_get_multi_proof_caches_nodes() {
         let base_path = tempfile::tempdir().unwrap().path().to_path_buf();
         let base_db = create_rocks_db(&base_path).unwrap();
 
@@ -1962,7 +1761,6 @@ mod tests {
         base_tree.commit(id_builder.new_id()).unwrap();
         let original_root = base_tree.root_hash(&identifier).unwrap();
 
-        // Get proof from base tree for keys that will be queried
         let base_merkle_tree = base_tree
             .tries
             .trees
