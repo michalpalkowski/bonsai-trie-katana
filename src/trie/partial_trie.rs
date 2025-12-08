@@ -36,9 +36,18 @@ impl<DBE: DBError> From<PartialTrieError> for BonsaiStorageError<DBE> {
     }
 }
 
+/// A partial Merkle-Patricia trie that supports proof-based operations.
+///
+/// Unlike a full `MerkleTree`, a `PartialTrie` can operate with incomplete data
+/// by loading missing nodes from proofs. This is useful for:
+/// - Forking from a remote network without downloading the entire state
+/// - Operating on a subset of the trie while maintaining cryptographic integrity
+///
+/// Nodes are lazily loaded from proofs during traversal and cached in the
+/// underlying `MerkleTree` for subsequent operations.
 pub struct PartialTrie<H: StarkHash> {
-    pub trie: MerkleTree<H>,
-    pub _hasher: PhantomData<H>,
+    pub(crate) trie: MerkleTree<H>,
+    _hasher: PhantomData<H>,
 }
 
 impl<H: StarkHash> fmt::Debug for PartialTrie<H> {
@@ -132,9 +141,20 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         self.get_multi_proof_partial_trie(db, keys, None, None)
     }
 
-    /// Generates a multi-proof for the given keys, optionally using proof from the original tree
-    /// to fill missing nodes. This allows generating complete proofs for forks that don't have
-    /// all nodes in the database.
+    /// Generates a multi-proof for the given keys.
+    ///
+    /// For keys that exist in the local database, nodes are loaded directly.
+    /// For missing nodes, the `original_proof` is used as a fallback data source.
+    /// Nodes loaded from the proof are cached in memory and persisted on `commit()`.
+    ///
+    /// # Arguments
+    /// * `db` - Database connection for loading cached nodes
+    /// * `keys` - Keys to generate proof for
+    /// * `original_proof` - Fallback proof for loading missing nodes (from parent/forked state)
+    /// * `original_root` - Root hash of the original tree (required when using original_proof)
+    ///
+    /// # Returns
+    /// A `MultiProof` that can verify all requested keys against this trie's root.
     pub fn get_multi_proof_partial_trie<DB: BonsaiDatabase, ID: Id>(
         &mut self,
         db: &KeyValueDB<DB, ID>,
@@ -204,7 +224,7 @@ mod tests {
     use crate::{
         databases::{create_rocks_db, RocksDB, RocksDBConfig},
         id::{BasicId, BasicIdBuilder},
-        BonsaiStorage, BonsaiStorageConfig, PartialMerkleTrees,
+        BitVec, BonsaiStorage, BonsaiStorageConfig, PartialMerkleTrees,
     };
     use bitvec::{bits, prelude::Msb0};
     use proptest::collection::vec;
@@ -515,9 +535,7 @@ mod tests {
             .entry(smallvec::smallvec![1])
             .or_insert_with(|| MerkleTree::new(base_identifier.clone().into(), height));
 
-        let mut i = 0;
         for (key, value) in new_keys_values.iter() {
-            i += 1;
             let proof_keys = vec![key];
             let proof = tree1
                 .get_multi_proof(&base_bonsai_storage.tries.db, proof_keys.iter())

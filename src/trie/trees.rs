@@ -6,7 +6,7 @@ use crate::{
 use core::fmt;
 use starknet_types_core::{felt::Felt, hash::StarkHash};
 
-/// Trait defining common operations for tree types
+/// Internal trait - not intended for external implementation. Defines common operations for tree types (MerkleTree and PartialTrie).
 pub trait TreeOperations<H: StarkHash, DB: BonsaiDatabase, CommitID: Id> {
     fn new(identifier: ByteVec, max_height: u8) -> Self;
 
@@ -48,27 +48,6 @@ pub trait TreeOperations<H: StarkHash, DB: BonsaiDatabase, CommitID: Id> {
         impl Iterator<Item = (crate::trie::TrieKey, InsertOrRemove<ByteVec>)>,
         BonsaiStorageError<DB::DatabaseError>,
     >;
-}
-
-/// Trait for trees that support multi-proof generation
-pub trait ProofCapable<H: StarkHash, DB: BonsaiDatabase, CommitID: Id> {
-    fn get_multi_proof(
-        &mut self,
-        db: &KeyValueDB<DB, CommitID>,
-        keys: impl IntoIterator<Item = impl AsRef<BitSlice>>,
-    ) -> Result<MultiProof, BonsaiStorageError<DB::DatabaseError>>;
-}
-
-/// Trait for trees that support proof-based operations
-pub trait ProofBased<H: StarkHash, DB: BonsaiDatabase, CommitID: Id> {
-    fn set_with_proof(
-        &mut self,
-        db: &mut KeyValueDB<DB, CommitID>,
-        key: &BitSlice,
-        value: Felt,
-        proof: MultiProof,
-        original_root: Felt,
-    ) -> Result<(), BonsaiStorageError<DB::DatabaseError>>;
 }
 
 impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id> TreeOperations<H, DB, CommitID>
@@ -127,30 +106,6 @@ impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id> TreeOperation
         BonsaiStorageError<DB::DatabaseError>,
     > {
         self.get_updates::<DB>()
-    }
-}
-
-impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id> ProofCapable<H, DB, CommitID>
-    for MerkleTree<H>
-{
-    fn get_multi_proof(
-        &mut self,
-        db: &KeyValueDB<DB, CommitID>,
-        keys: impl IntoIterator<Item = impl AsRef<BitSlice>>,
-    ) -> Result<MultiProof, BonsaiStorageError<DB::DatabaseError>> {
-        self.get_multi_proof(db, keys)
-    }
-}
-
-impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id> ProofCapable<H, DB, CommitID>
-    for PartialTrie<H>
-{
-    fn get_multi_proof(
-        &mut self,
-        db: &KeyValueDB<DB, CommitID>,
-        keys: impl IntoIterator<Item = impl AsRef<BitSlice>>,
-    ) -> Result<MultiProof, BonsaiStorageError<DB::DatabaseError>> {
-        self.get_multi_proof(db, keys)
     }
 }
 
@@ -213,21 +168,6 @@ impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id> TreeOperation
     }
 }
 
-impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id> ProofBased<H, DB, CommitID>
-    for PartialTrie<H>
-{
-    fn set_with_proof(
-        &mut self,
-        db: &mut KeyValueDB<DB, CommitID>,
-        key: &BitSlice,
-        value: Felt,
-        proof: MultiProof,
-        original_root: Felt,
-    ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
-        self.set_with_proof(db, key, value, proof, original_root)
-    }
-}
-
 pub struct MerkleTrees<
     H: StarkHash + Send + Sync,
     DB: BonsaiDatabase,
@@ -236,14 +176,13 @@ pub struct MerkleTrees<
 > where
     TreeType: TreeOperations<H, DB, CommitID>,
 {
-    pub db: KeyValueDB<DB, CommitID>,
-    pub trees: HashMap<ByteVec, TreeType>,
-    pub max_height: u8,
+    pub(crate) db: KeyValueDB<DB, CommitID>,
+    pub(crate) trees: HashMap<ByteVec, TreeType>,
+    pub(crate) max_height: u8,
     _phantom: core::marker::PhantomData<(H, DB, CommitID)>,
 }
 
-// Type aliases
-pub type FullMerkleTrees<H, DB, CommitID> = MerkleTrees<H, DB, CommitID, MerkleTree<H>>;
+/// Type alias for partial trie storage used in forked state scenarios.
 pub type PartialMerkleTrees<H, DB, CommitID> = MerkleTrees<H, DB, CommitID, PartialTrie<H>>;
 
 impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase + fmt::Debug, CommitID: Id, TreeType> fmt::Debug
@@ -429,9 +368,6 @@ where
     }
 
     pub(crate) fn commit(&mut self) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
-        #[cfg(feature = "std")]
-        use rayon::prelude::*;
-
         let mut batch = self.db.create_batch();
 
         for (_, tree) in self.trees.iter_mut() {
@@ -475,23 +411,7 @@ impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id>
 impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id>
     MerkleTrees<H, DB, CommitID, PartialTrie<H>>
 {
-    pub(crate) fn set_with_proof(
-        &mut self,
-        identifier: &[u8],
-        key: &BitSlice,
-        value: Felt,
-        proof: MultiProof,
-        original_root: Felt,
-    ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
-        let tree = self
-            .trees
-            .entry_ref(identifier)
-            .or_insert_with(|| PartialTrie::new(identifier.into(), self.max_height));
-
-        tree.set_with_proof(&mut self.db, key, value, proof, original_root)
-    }
-
-    pub fn get_multi_proof_partial_trie(
+    pub(crate) fn get_multi_proof_partial_trie(
         &mut self,
         identifier: &[u8],
         keys: impl IntoIterator<Item = impl AsRef<BitSlice>>,

@@ -60,6 +60,9 @@ impl ProofNode {
         }
     }
 }
+
+/// A multi-proof containing multiple proof nodes indexed by their hash.
+/// Uses IndexMap to preserve insertion order during proof traversal.
 #[derive(Debug, Clone)]
 pub struct MultiProof(pub IndexMap<Felt, ProofNode>);
 impl MultiProof {
@@ -348,9 +351,8 @@ mod tests {
         let proof = tree1
             .get_multi_proof(&base_tree.tries.db, &fork_keys)
             .unwrap();
-        println!("Proof: {:?}", proof);
 
-        let verified_values = proof
+        let _verified_values = proof
             .verify_proof::<Pedersen>(
                 tree1.root_hash(&base_tree.tries.db).unwrap(),
                 fork_keys.iter(),
@@ -358,7 +360,6 @@ mod tests {
             )
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        println!("Verified values: {:?}", verified_values);
     }
 
     #[test]
@@ -424,9 +425,8 @@ mod tests {
         let proof = tree1
             .get_multi_proof(&base_tree.tries.db, &fork_keys)
             .unwrap();
-        println!("Proof: {:?}", proof);
 
-        let verified_values = proof
+        let _verified_values = proof
             .verify_proof::<Pedersen>(
                 tree1.root_hash(&base_tree.tries.db).unwrap(),
                 fork_keys.iter(),
@@ -434,6 +434,5 @@ mod tests {
             )
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        println!("Verified values: {:?}", verified_values);
     }
 }

@@ -210,10 +210,8 @@ pub struct BonsaiStorage<
     H: StarkHash + Send + Sync,
     T = MerkleTrees<H, DB, ChangeID>,
 > {
-    tries: T,
-    _hasher: PhantomData<H>,
-    _db: PhantomData<DB>,
-    _change_id: PhantomData<ChangeID>,
+    pub(crate) tries: T,
+    _marker: PhantomData<(H, DB, ChangeID)>,
 }
 
 impl<ChangeID: Id, DB: BonsaiDatabase, H: StarkHash + Send + Sync> fmt::Debug
@@ -251,9 +249,7 @@ impl<ChangeID: Id, DB: BonsaiDatabase, H: StarkHash + Send + Sync>
         let key_value_db = KeyValueDB::new(db, config.into(), None);
         Self {
             tries: MerkleTrees::new(key_value_db, max_height),
-            _hasher: PhantomData,
-            _db: PhantomData,
-            _change_id: PhantomData,
+            _marker: PhantomData,
         }
     }
 
@@ -267,9 +263,7 @@ impl<ChangeID: Id, DB: BonsaiDatabase, H: StarkHash + Send + Sync>
         let tries = MerkleTrees::<H, DB, ChangeID>::new(key_value_db, max_height);
         Ok(Self {
             tries,
-            _hasher: PhantomData,
-            _db: PhantomData,
-            _change_id: PhantomData,
+            _marker: PhantomData,
         })
     }
 
@@ -585,9 +579,7 @@ impl<ChangeID: Id, DB: BonsaiDatabase, H: StarkHash + Send + Sync>
         let key_value_db = KeyValueDB::new(db, config.into(), None);
         Self {
             tries: PartialMerkleTrees::new(key_value_db, max_height),
-            _hasher: PhantomData,
-            _db: PhantomData,
-            _change_id: PhantomData,
+            _marker: PhantomData,
         }
     }
 

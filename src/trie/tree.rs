@@ -356,8 +356,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                 },
             );
         }
-        // #[cfg(test)]
-        // self.assert_empty(); // we should have visited the whole tree
 
         Ok(updates.into_iter())
     }
@@ -684,11 +682,15 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                         // Path from binary node to new leaf
                         let new_path = key[child_height..].to_bitvec();
                         // Path from binary node to existing child
-                        let old_path = if common.len() + 1 <= edge.path.len() {
-                            edge.path[common.len() + 1..].to_bitvec()
-                        } else {
-                            panic!("old_path is too short: edge.path len: {}, common len: {}, key: {:?}", edge.path.len(), common.len(), key);
-                        };
+                        if common.len() + 1 > edge.path.len() {
+                            return Err(BonsaiStorageError::Trie(format!(
+                                "Invalid edge path: edge.path.len()={}, common.len()={}, key={:?}",
+                                edge.path.len(),
+                                common.len(),
+                                key
+                            )));
+                        }
+                        let old_path = edge.path[common.len() + 1..].to_bitvec();
 
                         // The new leaf branch of the binary node.
                         // (this may be edge -> leaf, or just leaf depending).

@@ -115,17 +115,21 @@ pub struct MerkleTreeIterator<'a, H: StarkHash, DB: BonsaiDatabase, ID: Id> {
     pub(crate) leaf_hash: Option<Felt>,
 }
 
+/// Iterator for traversing a partial Merkle tree with proof-based node loading.
+///
+/// Unlike `MerkleTreeIterator`, this iterator can load missing nodes from a provided
+/// `MultiProof` during traversal. Loaded nodes are cached in the tree for subsequent
+/// operations.
 pub struct PartialMerkleTreeIterator<'a, H: StarkHash, DB: BonsaiDatabase, ID: Id> {
     pub(crate) tree: &'a mut MerkleTree<H>,
     pub(crate) db: &'a KeyValueDB<DB, ID>,
-    /// Current iteration path.
+    /// Current iteration path (bits traversed so far).
     pub(crate) current_path: Path,
-    /// The loaded nodes in the current path with their corresponding heights. Height is at the base of the node, meaning
-    /// the first node here will always have height 0.
+    /// Stack of visited nodes with their heights for backtracking.
     pub(crate) current_partial_nodes_heights: Vec<(NodeKey, usize)>,
-    /// Current leaf hash. Note that partial traversal (traversal that stops midway through the tree) will
-    /// also update this field if an exact match for the key is found, even though we may not have reached a leaf.
+    /// Hash of the leaf at current position (if found).
     pub(crate) leaf_hash: Option<Felt>,
+    /// Proof used as fallback for loading missing nodes.
     pub(crate) proof: MultiProof,
 }
 
@@ -414,14 +418,12 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
         } else {
             // Get remaining nodes from full proof
             // This happens in first iteration with empty trie
-            let proof_clone = self.proof.clone().0.clone();
-
             // Child of last node in partial trie doesn't exist
             // Get it from proof since it hasn't been modified
             let child_hash = proof_node_handle
                 .as_hash()
                 .ok_or(IteratorError::InvalidNodeHandle)?;
-            let Some(child_node) = proof_clone.get(&child_hash) else {
+            let Some(child_node) = self.proof.0.get(&child_hash) else {
                 return Ok(None);
             };
 
@@ -505,15 +507,11 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
                         Some(root_node_id)
                     }
                     None => {
-                        // empty tree, not found
-                        // Start from tree root.
+                        // Empty tree - load root from proof
                         self.current_path.clear();
 
-                        // Get root hash from proof
-                        let proof_clone = self.proof.clone().0.clone();
-
                         // Get root node from proof by its hash
-                        let Some(root_node) = proof_clone.get(&root) else {
+                        let Some(root_node) = self.proof.0.get(&root) else {
                             self.leaf_hash = None;
                             return Ok(());
                         };
