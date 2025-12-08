@@ -79,12 +79,12 @@ impl MerkleTreeInsertProblem {
                 Step::Insert(k, v) => {
                     log::trace!("== STEP == setting {k:?} => {v:?}");
                     ckv.insert(k.0.clone(), v.0);
-                    tree.set(&hashmap_db, &k.0, v.0, None).unwrap();
+                    tree.set(&hashmap_db, &k.0, v.0).unwrap();
                 }
                 Step::Remove(k) => {
                     log::trace!("== STEP == removing {k:?}");
                     ckv.insert(k.0.clone(), Felt::ZERO);
-                    tree.set(&hashmap_db, &k.0, Felt::ZERO, None).unwrap();
+                    tree.set(&hashmap_db, &k.0, Felt::ZERO).unwrap();
                 }
                 Step::Commit => {
                     log::trace!("== STEP == commit");
@@ -106,7 +106,7 @@ impl MerkleTreeInsertProblem {
         // check for leaks
         for (k, _v) in ckv {
             log::trace!("removing {k:b}..... (check for leaks)");
-            tree.set(&hashmap_db, &k, Felt::ZERO, None).unwrap();
+            tree.set(&hashmap_db, &k, Felt::ZERO).unwrap();
             tree.commit(&mut hashmap_db).unwrap();
         }
 

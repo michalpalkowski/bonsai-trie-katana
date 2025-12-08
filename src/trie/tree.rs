@@ -591,13 +591,29 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
     ///
     /// * `key` - The key to set.
     /// * `value` - The value to set.
-    /// * `path_nodes` - Optional path nodes from proof traversal. If None, will use direct iteration.
     pub fn set<DB: BonsaiDatabase, ID: Id>(
         &mut self,
         db: &KeyValueDB<DB, ID>,
         key: &BitSlice,
         value: Felt,
-        path_nodes: Option<Vec<(NodeKey, usize)>>,
+    ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
+        let path_nodes = {
+            let mut iter = self.iter(db);
+            iter.seek_to(key)?;
+            log::trace!("Iter is {:?}", iter);
+            iter.current_nodes_heights
+        };
+        self.set_with_path_nodes(db, key, value, path_nodes)
+    }
+
+    /// Sets the value of a key using pre-computed path nodes.
+    /// This is used by PartialTrie which computes path nodes from proofs.
+    pub(crate) fn set_with_path_nodes<DB: BonsaiDatabase, ID: Id>(
+        &mut self,
+        db: &KeyValueDB<DB, ID>,
+        key: &BitSlice,
+        value: Felt,
+        path_nodes: Vec<(NodeKey, usize)>,
     ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
         if value == Felt::ZERO {
             return self.delete_leaf(db, key);
@@ -630,15 +646,6 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
                 return Ok(());
             }
         }
-
-        let path_nodes = if let Some(nodes) = path_nodes {
-            nodes
-        } else {
-            let mut iter = self.iter(db);
-            iter.seek_to(key)?;
-            log::trace!("Iter is {:?}", iter);
-            iter.current_nodes_heights
-        };
 
         // There are three possibilities.
         //

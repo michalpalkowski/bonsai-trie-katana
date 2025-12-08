@@ -6,7 +6,6 @@ use super::{
 };
 use crate::fmt;
 use crate::trie::proof::{ProofNode, ProofVerificationError};
-use crate::BitVec;
 use crate::DBError;
 use crate::MultiProof;
 use crate::{
@@ -83,7 +82,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
     ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
         let path_nodes = self.seek_to(key, proof, original_root, db)?;
 
-        self.trie.set(db, key, value, Some(path_nodes))?;
+        self.trie.set_with_path_nodes(db, key, value, path_nodes)?;
 
         Ok(())
     }
@@ -1596,7 +1595,7 @@ mod tests {
         for (k, v) in key_values.iter() {
             partial_trie
                 .trie
-                .set(&mut bonsai_storage.tries.db, k, *v, None)
+                .set(&bonsai_storage.tries.db, k, *v)
                 .unwrap();
         }
         partial_trie.commit(&mut bonsai_storage.tries.db).unwrap();

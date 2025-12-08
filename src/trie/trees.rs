@@ -6,7 +6,7 @@ use crate::{
 use core::fmt;
 use starknet_types_core::{felt::Felt, hash::StarkHash};
 
-/// Internal trait - not intended for external implementation. Defines common operations for tree types (MerkleTree and PartialTrie).
+/// Internal trait defining common operations for tree types (MerkleTree and PartialTrie).
 pub trait TreeOperations<H: StarkHash, DB: BonsaiDatabase, CommitID: Id> {
     fn new(identifier: ByteVec, max_height: u8) -> Self;
 
@@ -15,7 +15,6 @@ pub trait TreeOperations<H: StarkHash, DB: BonsaiDatabase, CommitID: Id> {
         db: &KeyValueDB<DB, CommitID>,
         key: &BitSlice,
         value: Felt,
-        path_nodes: Option<Vec<(crate::trie::tree::NodeKey, usize)>>,
     ) -> Result<(), BonsaiStorageError<DB::DatabaseError>>;
 
     fn get(
@@ -62,9 +61,8 @@ impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id> TreeOperation
         db: &KeyValueDB<DB, CommitID>,
         key: &BitSlice,
         value: Felt,
-        path_nodes: Option<Vec<(crate::trie::tree::NodeKey, usize)>>,
     ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
-        self.set(db, key, value, path_nodes)
+        self.set(db, key, value)
     }
 
     fn get(
@@ -121,9 +119,8 @@ impl<H: StarkHash + Send + Sync, DB: BonsaiDatabase, CommitID: Id> TreeOperation
         db: &KeyValueDB<DB, CommitID>,
         key: &BitSlice,
         value: Felt,
-        path_nodes: Option<Vec<(crate::trie::tree::NodeKey, usize)>>,
     ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
-        self.trie.set(db, key, value, path_nodes)
+        self.trie.set(db, key, value)
     }
 
     fn get(
@@ -239,7 +236,7 @@ where
             .entry_ref(identifier)
             .or_insert_with(|| TreeType::new(identifier.into(), self.max_height));
 
-        tree.set(&self.db, key, value, None)
+        tree.set(&self.db, key, value)
     }
 
     pub(crate) fn get(
