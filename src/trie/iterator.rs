@@ -305,7 +305,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeTrave
         );
 
         self.current_nodes_heights.truncate(nodes_new_len);
-        self.current_path.truncate(key.len());
+        self.current_path.truncate(shared_prefix_len);
 
         let mut next_to_visit = if let Some((node_id, height)) = self.current_nodes_heights.pop() {
             self.current_path.truncate(height);
@@ -488,11 +488,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
         };
 
         self.current_partial_nodes_heights.truncate(nodes_new_len);
-        self.current_path.truncate(key.len());
-
-        if shared_prefix_len == 0 {
-            self.current_path.clear();
-        }
+        self.current_path.truncate(shared_prefix_len);
 
         let mut next_to_visit =
             if let Some((node_id, height)) = self.current_partial_nodes_heights.pop() {
