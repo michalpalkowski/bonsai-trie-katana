@@ -1889,4 +1889,192 @@ mod tests {
             "Proofs should have same number of nodes"
         );
     }
+
+    /// Minimal test to reproduce "Invalid edge path" error using exact values from katana test
+    /// This test uses the exact failing input from katana's test_minimal_failing_input_regression
+    #[test]
+    fn test_invalid_edge_path_reproduction_katana_values() {
+        use bitvec::view::AsBits;
+        
+        let base_path = tempfile::tempdir().unwrap().path().to_path_buf();
+        let base_db = create_rocks_db(&base_path).unwrap();
+        let fork_path = tempfile::tempdir().unwrap().path().to_path_buf();
+        let fork_db = create_rocks_db(&fork_path).unwrap();
+
+        let identifier = vec![1];
+        let fork_identifier = vec![2];
+        let config = BonsaiStorageConfig::default();
+        const MAX_HEIGHT: u8 = 251;
+
+        let mut base_tree: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
+            BonsaiStorage::new(
+                RocksDB::new(&base_db, RocksDBConfig::default()),
+                config.clone(),
+                MAX_HEIGHT,
+            );
+
+        let mut fork_tree: BonsaiStorage<
+            BasicId,
+            RocksDB<'_, BasicId>,
+            Pedersen,
+            PartialMerkleTrees<Pedersen, RocksDB<'_, BasicId>, BasicId>,
+        > = BonsaiStorage::new_partial(
+            RocksDB::new(&fork_db, RocksDBConfig::default()),
+            config.clone(),
+            MAX_HEIGHT,
+        );
+
+        let mut id_builder = BasicIdBuilder::new();
+
+        // Initial state from katana test: state_updates_vec[0]
+        let initial_key = Felt::from_hex_unchecked(
+            "0x475cedf016783eb3d5d0a8ae58102641303e400ac71dee1107990c4144a0aa4"
+        )
+        .to_bytes_be()
+        .as_bits()[5..]
+        .to_owned();
+        let initial_value = Felt::from_hex_unchecked(
+            "0x1629f837c6a0d07ade7a8925a6843adb39e48dc808c67bae82961f6bef896e1"
+        );
+        
+        // Insert initial key into base tree
+        base_tree.insert(&identifier, &initial_key, &initial_value).unwrap();
+        base_tree.commit(id_builder.new_id()).unwrap();
+        let original_root = base_tree.root_hash(&identifier).unwrap();
+
+        // Fork updates from katana test: fork_minimal_updates_vec
+        let fork_keys_values = vec![
+            // fork_minimal_updates_vec[0]
+            (
+                Felt::from_hex_unchecked(
+                    "0x5e6f1fa63556682aaee138df20080a70a803cc2d6711f271dc910635b9d66d7"
+                )
+                .to_bytes_be()
+                .as_bits()[5..]
+                .to_owned(),
+                Felt::from_hex_unchecked(
+                    "0x20755f5ad5fcdfe23fc74d6fb617d82a107a994b0653a6952ec3ef1fc0b2de5"
+                ),
+            ),
+            // fork_minimal_updates_vec[2] (note: index 1 in vec, but labeled as [2] in katana)
+            (
+                Felt::from_hex_unchecked(
+                    "0x44a7b4f76c2fe9cb6367d7a7f0c4a5188b3c02c6038706546b516f527470d51"
+                )
+                .to_bytes_be()
+                .as_bits()[5..]
+                .to_owned(),
+                Felt::from_hex_unchecked(
+                    "0x4c2cb13bd093da7cbead27adef8b2ab02d36f2b8c47eeeee4759709b96847ee"
+                ),
+            ),
+        ];
+
+        let num_iters = 2; // From katana test
+
+        // Execute iterations like katana test does
+        for i in 0..num_iters {
+            let (fork_key, fork_value) = &fork_keys_values[i];
+
+            // In Katana, proof is fetched from RPC for the fork point (original_root),
+            // not for the current state. So we need to generate proof BEFORE inserting
+            // into base_tree, using the state at original_root.
+            // 
+            // However, since base_tree already has initial_key, we need to create
+            // a tree that represents the state at fork point (original_root) to generate
+            // the proof correctly.
+            
+            // Create a tree that represents the state at fork point (original_root)
+            // (with initial_key but without fork_keys_values from previous iterations)
+            let fork_point_path = tempfile::tempdir().unwrap().path().to_path_buf();
+            let fork_point_db = create_rocks_db(&fork_point_path).unwrap();
+            let mut fork_point_tree: BonsaiStorage<BasicId, RocksDB<'_, BasicId>, Pedersen> =
+                BonsaiStorage::new(
+                    RocksDB::new(&fork_point_db, RocksDBConfig::default()),
+                    config.clone(),
+                    MAX_HEIGHT,
+                );
+            
+            // Recreate the state at fork point (original_root) - only initial_key
+            fork_point_tree.insert(&identifier, &initial_key, &initial_value).unwrap();
+            fork_point_tree.commit(id_builder.new_id()).unwrap();
+            
+            // Get multiproof for fork_key from the state at fork point (original_root)
+            // This simulates fetching proof from RPC for the fork point
+            let multiproof = {
+                let fork_point_merkle_tree = fork_point_tree
+                    .tries
+                    .trees
+                    .get_mut(&smallvec::smallvec![1])
+                    .unwrap();
+                fork_point_merkle_tree
+                    .get_multi_proof(&fork_point_tree.tries.db, &[fork_key])
+                    .unwrap()
+            };
+
+            // Now insert into base_tree (this simulates mainnet progressing)
+            base_tree.insert(&identifier, fork_key, fork_value).unwrap();
+            base_tree.commit(id_builder.new_id()).unwrap();
+
+            // Print multiproof details for comparison with katana
+            println!("\n=== Iteration {} ===", i);
+            println!("Key: {:?}", fork_key);
+            println!("Value: {:?}", fork_value);
+            println!("Multiproof size: {} nodes", multiproof.0.len());
+            println!("Multiproof nodes:");
+            for (hash, node) in multiproof.0.iter() {
+                match node {
+                    ProofNode::Binary { left, right } => {
+                        println!("  Binary node:");
+                        println!("    Hash: {:?}", hash);
+                        println!("    Left: {:?}", left);
+                        println!("    Right: {:?}", right);
+                    }
+                    ProofNode::Edge { child, path } => {
+                        println!("  Edge node:");
+                        println!("    Hash: {:?}", hash);
+                        println!("    Child: {:?}", child);
+                        println!("    Path length: {}", path.len());
+                        println!("    Path bits: {:?}", path);
+                    }
+                }
+            }
+            println!("Original root: {:?}", original_root);
+            let current_base_root = base_tree.root_hash(&identifier).unwrap();
+            println!("Current base root: {:?}", current_base_root);
+
+            // Try to insert into fork tree - this should trigger the "Invalid edge path" error
+            // at iteration 1 (when i=1, using fork_keys_values[1], which is fork_minimal_updates_vec[2] from katana)
+            let result = fork_tree.insert_with_proof(
+                &fork_identifier,
+                fork_key,
+                fork_value,
+                multiproof,
+                original_root, // Always use original_root, not current_root
+            );
+
+            match result {
+                Err(BonsaiStorageError::Trie(msg)) if msg.contains("Invalid edge path") => {
+                    println!("Successfully reproduced the error at iteration {}: {}", i, msg);
+                    panic!("Bug still exists at iteration {}: {}", i, msg);
+                }
+                Ok(_) => {
+                    fork_tree.commit(id_builder.new_id()).unwrap();
+                    println!("Iteration {} succeeded", i);
+                }
+                Err(e) => {
+                    panic!("Unexpected error at iteration {}: {:?}", i, e);
+                }
+            }
+        }
+
+        // Verify the roots match after all iterations
+        let fork_root = fork_tree.root_hash(&fork_identifier).unwrap();
+        let base_root = base_tree.root_hash(&identifier).unwrap();
+        assert_eq!(
+            fork_root, base_root,
+            "Roots should match after all operations: fork={:?}, base={:?}",
+            fork_root, base_root
+        );
+    }
 }
