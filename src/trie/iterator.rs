@@ -305,7 +305,7 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeTrave
         );
 
         self.current_nodes_heights.truncate(nodes_new_len);
-        self.current_path.truncate(shared_prefix_len);
+        self.current_path.truncate(key.len());
 
         let mut next_to_visit = if let Some((node_id, height)) = self.current_nodes_heights.pop() {
             self.current_path.truncate(height);
@@ -337,8 +337,8 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeTrave
                 return Ok(());
             };
 
-            next_to_visit = self.traverse_one(node_id, self.current_path.len(), key)?;
             visitor.visit_node::<DB>(self.tree, node_id, self.current_path.len())?;
+            next_to_visit = self.traverse_one(node_id, self.current_path.len(), key)?;
 
             log::trace!(
                 "Got nodeid={:?} height={}, cur path={:?}, next to visit={:?}",
@@ -552,8 +552,8 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id>
                 return Ok(());
             };
 
-            next_to_visit = self.traverse_one(node_id, self.current_path.len(), key)?;
             visitor.visit_partial_node::<DB>(self.tree, node_id, self.current_path.len())?;
+            next_to_visit = self.traverse_one(node_id, self.current_path.len(), key)?;
 
             log::trace!(
                 "Got nodeid={:?} height={}, cur path={:?}, next to visit={:?}",
