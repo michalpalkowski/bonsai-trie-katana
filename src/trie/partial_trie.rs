@@ -77,7 +77,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
         db: &mut KeyValueDB<DB, ID>,
         key: &BitSlice,
         value: Felt,
-        proof: MultiProof,
+        proof: &MultiProof,
         original_root: Felt,
     ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
         let path_nodes = self.seek_to(key, proof, original_root, db)?;
@@ -92,7 +92,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
     pub fn seek_to<DB: BonsaiDatabase, ID: Id>(
         &mut self,
         key: &BitSlice,
-        proof: MultiProof,
+        proof: &MultiProof,
         original_root: Felt,
         db: &KeyValueDB<DB, ID>,
     ) -> Result<Vec<(NodeKey, usize)>, BonsaiStorageError<DB::DatabaseError>> {
@@ -195,7 +195,7 @@ impl<H: StarkHash + Send + Sync> PartialTrie<H> {
 
         // Use provided proof or empty proof - the iterator will load nodes from database or proof
         let proof = original_proof.unwrap_or_else(|| MultiProof(Default::default()));
-        let mut iter = self.trie.iter_partial_trie(db, proof);
+        let mut iter = self.trie.iter_partial_trie(db, &proof);
         let mut visitor = PartialProofVisitor::<H>(MultiProof(Default::default()), PhantomData);
 
         // TODO: handle it better way instead of default
@@ -370,7 +370,7 @@ mod tests {
             reference_tree.commit(id_builder.new_id()).unwrap();
 
             fork_tree
-                .insert_with_proof(&identifier4, key, value, proof, original_root)
+                .insert_with_proof(&identifier4, key, value, &proof, original_root)
                 .unwrap();
             fork_tree.commit(id_builder.new_id()).unwrap();
             let fork_hash = fork_tree.root_hash(&identifier4).unwrap();
@@ -393,7 +393,7 @@ mod tests {
                 &identifier4,
                 one,
                 &Felt::from(13),
-                proof_for_one,
+                &proof_for_one,
                 original_root,
             )
             .unwrap();
@@ -541,7 +541,7 @@ mod tests {
                 .unwrap();
 
             forked_bonsai_storage
-                .insert_with_proof(&fork_identifier, key, value, proof, original_root)
+                .insert_with_proof(&fork_identifier, key, value, &proof, original_root)
                 .unwrap();
             forked_bonsai_storage.commit(id_builder.new_id()).unwrap();
             let fork_hash = forked_bonsai_storage.root_hash(&fork_identifier).unwrap();
@@ -684,7 +684,7 @@ mod tests {
             reference_tree.commit(id_builder.new_id()).unwrap();
 
             fork_tree
-                .insert_with_proof(&identifier4, key, value, proof, original_root)
+                .insert_with_proof(&identifier4, key, value, &proof, original_root)
                 .unwrap();
             fork_tree.commit(id_builder.new_id()).unwrap();
             let fork_hash = fork_tree.root_hash(&identifier4).unwrap();
@@ -707,7 +707,7 @@ mod tests {
                 &identifier4,
                 one,
                 &Felt::from(13),
-                proof_for_one,
+                &proof_for_one,
                 original_root,
             )
             .unwrap();
@@ -820,13 +820,7 @@ mod tests {
         for (i, key) in fork_keys.iter().enumerate() {
             println!("Inserting hash {}: {:?}", i + 1, key);
             fork_tree
-                .insert_with_proof(
-                    &identifier2,
-                    key,
-                    &Felt::from(1),
-                    proof.clone(),
-                    original_root,
-                )
+                .insert_with_proof(&identifier2, key, &Felt::from(1), &proof, original_root)
                 .unwrap();
             fork_tree.commit(id_builder.new_id()).unwrap();
         }
@@ -924,7 +918,7 @@ mod tests {
                 &identifier2,
                 &fork_keys[0],
                 &Felt::from(1),
-                proof.clone(),
+                &proof,
                 original_root,
             )
             .unwrap();
@@ -935,7 +929,7 @@ mod tests {
                 &identifier2,
                 &fork_keys[1],
                 &Felt::from(1),
-                proof2.clone(),
+                &proof2,
                 original_root,
             )
             .unwrap();
@@ -1448,7 +1442,7 @@ mod tests {
                 &identifier2,
                 key,
                 &Felt::from(0),
-                proof.clone(),
+                &proof,
                 mainnet_root,
             );
             match result {
@@ -1528,7 +1522,7 @@ mod tests {
                 &fork_identifier,
                 key_a,
                 &Felt::from(10),
-                original_proof_a.clone(),
+                &original_proof_a,
                 original_root,
             )
             .unwrap();
@@ -1537,7 +1531,7 @@ mod tests {
                 &fork_identifier,
                 key_d,
                 &Felt::from(4),
-                original_proof_d.clone(),
+                &original_proof_d,
                 original_root,
             )
             .unwrap();
@@ -1684,7 +1678,7 @@ mod tests {
                 &fork_identifier,
                 key_a,
                 &Felt::from(100),
-                original_proof.clone(),
+                &original_proof,
                 original_root,
             )
             .unwrap();
@@ -1796,7 +1790,7 @@ mod tests {
                 &fork_identifier,
                 key_a,
                 &Felt::from(10),
-                original_proof_a,
+                &original_proof_a,
                 original_root,
             )
             .unwrap();

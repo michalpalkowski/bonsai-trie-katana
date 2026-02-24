@@ -276,7 +276,7 @@ impl<H: StarkHash + Send + Sync> MerkleTree<H> {
     pub fn iter_partial_trie<'a, DB: BonsaiDatabase, ID: Id>(
         &'a mut self,
         db: &'a KeyValueDB<DB, ID>,
-        proof: MultiProof,
+        proof: &'a MultiProof,
     ) -> PartialMerkleTreeIterator<'a, H, DB, ID> {
         PartialMerkleTreeIterator::new(self, db, proof)
     }

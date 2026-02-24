@@ -6,7 +6,7 @@ use super::{
 use crate::trie::merkle_node::{BinaryNode, EdgeNode};
 use crate::{
     id::Id, key_value_db::KeyValueDB, BitSlice, BonsaiDatabase, BonsaiStorageError, DBError,
-    MultiProof, ProofNode, Vec,
+    MultiProof, ProofNode, ToString, Vec,
 };
 use core::{fmt, marker::PhantomData};
 use starknet_types_core::{felt::Felt, hash::StarkHash};
@@ -130,7 +130,7 @@ pub struct PartialMerkleTreeIterator<'a, H: StarkHash, DB: BonsaiDatabase, ID: I
     /// Hash of the leaf at current position (if found).
     pub(crate) leaf_hash: Option<Felt>,
     /// Proof used as fallback for loading missing nodes.
-    pub(crate) proof: MultiProof,
+    pub(crate) proof: &'a MultiProof,
 }
 
 impl<'a, H: StarkHash, DB: BonsaiDatabase, ID: Id> fmt::Debug
@@ -172,7 +172,11 @@ impl<'a, H: StarkHash + Send + Sync, DB: BonsaiDatabase, ID: Id> MerkleTreeItera
 }
 
 impl<'a, H: StarkHash, DB: BonsaiDatabase, ID: Id> PartialMerkleTreeIterator<'a, H, DB, ID> {
-    pub fn new(tree: &'a mut MerkleTree<H>, db: &'a KeyValueDB<DB, ID>, proof: MultiProof) -> Self {
+    pub fn new(
+        tree: &'a mut MerkleTree<H>,
+        db: &'a KeyValueDB<DB, ID>,
+        proof: &'a MultiProof,
+    ) -> Self {
         Self {
             tree,
             db,

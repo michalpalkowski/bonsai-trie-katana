@@ -581,7 +581,7 @@ impl<ChangeID: Id, DB: BonsaiDatabase, H: StarkHash + Send + Sync>
         identifier: &[u8],
         key: &BitSlice,
         value: &Felt,
-        proof: MultiProof,
+        proof: &MultiProof,
         original_root: Felt,
     ) -> Result<(), BonsaiStorageError<DB::DatabaseError>> {
         if let Some(tree) = self.tries.trees.get_mut(identifier) {
